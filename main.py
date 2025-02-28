@@ -25,45 +25,36 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Call AI model to analyze resume with all requested attributes
+# Call AI model to analyze resume with enhanced evaluation attributes
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
-    Provide a structured analysis including:
+    Provide a structured analysis with EXACT labeled fields as follows:
     
-    PART 1: Basic Analysis
-    - Candidate Name
-    - Total Experience (Years): Calculate this from the earliest job date to either the latest job end date or current date if the candidate is currently employed. Format as a number.
-    - Relevancy Score (0-100)
-    - Strong Matches Score: Score based on exact skill matches with the job description
-    - Strong Matches Reasoning: Explain why these skills are considered strong matches
-    - Partial Matches Score: Score based on related but not exact matches with the job description
-    - Partial Matches Reasoning: Explain why these skills are considered partial matches
-    - All Tech Skills: A comprehensive list of ALL technical skills mentioned in the resume
-    - Relevant Tech Skills: Only the technical skills that align with the job description
-    - Degree: List the highest qualification only (e.g., Undergraduate, Graduate, PhD, etc.)
-    - College/University
-    - Job Applying For: Extract the Job ID from the job description. Look for the word "Job ID" or "Job ID".
-    - College Rating: Rate the college as Premium or Non-Premium.
-    - Job Stability: Rate the stability of the candidate's job history on a scale of ten. If the person has spent at least 2 years in each job, give a full 10. Otherwise, rate based on how frequently they switch jobs.
-    - Latest Company: Identify the latest company the candidate is working for.
-    - Leadership Skills: Check for leadership skills and provide a rating or description.
-    - International Team Experience: Check if the candidate has worked with teams outside India. Look for mentions of people from different countries they have worked with.
-    - Notice Period: Check if the candidate has mentioned a notice period or is an immediate joiner.
+    Candidate Name: [Extract full name]
+    Total Experience (Years): [Calculate years from earliest job to latest or current]
+    Relevancy Score (0-100): [Score based on overall match]
+    Strong Matches Score: [Score for exact skill matches]
+    Strong Matches Reasoning: [Explain strong matches]
+    Partial Matches Score: [Score for related skills]
+    Partial Matches Reasoning: [Explain partial matches]
+    All Tech Skills: [List ALL technical skills]
+    Relevant Tech Skills: [List only skills relevant to job]
+    Degree: [Highest degree only]
+    College/University: [Institution name]
+    Job Applying For: [Extract Job ID from job description]
+    College Rating: [Rate as "Premium" or "Non-Premium"]
+    Job Stability: [Rate 1-10, give 10 if ≥2 years per job]
+    Latest Company: [Most recent employer]
+    Leadership Skills: [Describe leadership experience]
+    International Team Experience: [Yes/No + details about working with teams outside India]
+    Notice Period: [Extract notice period info or "Immediate Joiner"]
+    Overall Weighted Score: [Calculate final score 0-100]
+    Selection Recommendation: [Recommend or Do Not Recommend]
     
-    PART 2: Final Evaluation
-    - Overall Weighted Score (0-100): Calculate a weighted score based on the candidate's overall fit for the position
-    - Selection Recommendation: Recommend if score is ≥75% ("Recommend" or "Do Not Recommend")
+    Use EXACTLY these field labels in your response, followed by your analysis.
+    DO NOT use any markdown formatting in your response.
     
-    Format your response with labels exactly as shown above, followed by a colon and the value.
-    For example:
-    Candidate Name: John Doe
-    Total Experience (Years): 5
-    ...and so on.
-    
-    IMPORTANT: Do not use Markdown formatting (like **, *, _, etc.) in your response.
-    Use plain text only.
-
     Resume:
     {resume_text}
     
@@ -75,10 +66,10 @@ def analyze_resume(client, resume_text, job_description):
         response = client.chat.completions.create(
             model="deepseek-r1-distill-qwen-32b",
             messages=[
-                {"role": "system", "content": "You are an expert resume analyzer and career coach. Provide analysis in a consistent format with clear labels. Do not use Markdown formatting in your response."},
+                {"role": "system", "content": "You are an expert resume analyzer. Your task is to extract and analyze key information from resumes against job descriptions. Format your response as a simple list of key-value pairs with NO markdown formatting."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
+            temperature=0.5,
             max_tokens=3000
         )
         ai_response = response.choices[0].message.content
@@ -110,145 +101,134 @@ def clean_text(text):
     
     return text.strip()
 
-# Parse AI response using flexible key-value extraction
+# Parse AI response using improved key-value extraction
 def parse_analysis(analysis):
     try:
-        # Use a more reliable key-value extraction approach
-        result = {}
+        # Definition of expected fields with exact matches and alternative formats
+        expected_fields = {
+            "Candidate Name": ["candidate name", "candidate's name", "name"],
+            "Total Experience (Years)": ["total experience (years)", "total experience", "experience (years)", "years of experience"],
+            "Relevancy Score (0-100)": ["relevancy score (0-100)", "relevancy score", "relevance score"],
+            "Strong Matches Score": ["strong matches score", "strong match score"],
+            "Strong Matches Reasoning": ["strong matches reasoning", "strong match reasoning"],
+            "Partial Matches Score": ["partial matches score", "partial match score"],
+            "Partial Matches Reasoning": ["partial matches reasoning", "partial match reasoning"],
+            "All Tech Skills": ["all tech skills", "all technical skills"],
+            "Relevant Tech Skills": ["relevant tech skills", "relevant technical skills"],
+            "Degree": ["degree", "highest degree", "qualification"],
+            "College/University": ["college/university", "university", "college", "institution"],
+            "Job Applying For": ["job applying for", "job id", "position applying for", "role applying for"],
+            "College Rating": ["college rating", "university rating", "institution rating"],
+            "Job Stability": ["job stability", "employment stability"],
+            "Latest Company": ["latest company", "current company", "most recent company"],
+            "Leadership Skills": ["leadership skills", "leadership experience", "leadership"],
+            "International Team Experience": ["international team experience", "global team experience", "international experience"],
+            "Notice Period": ["notice period", "joining availability", "availability to join"],
+            "Overall Weighted Score": ["overall weighted score", "overall score", "final score"],
+            "Selection Recommendation": ["selection recommendation", "hiring recommendation", "recommendation"]
+        }
         
-        # Define the keys we're looking for
-        keys = [
-            # Basic attributes
-            "Candidate Name", 
-            "Total Experience", "Total Experience (Years)",
-            "Relevancy Score", "Relevancy Score (0-100)",
-            "Strong Matches Score",
-            "Strong Matches Reasoning",
-            "Partial Matches Score",
-            "Partial Matches Reasoning",
-            "All Tech Skills",
-            "Relevant Tech Skills",
-            "Degree",
-            "College/University",
-            "Job Applying For",
-            "College Rating",
-            "Job Stability",
-            "Latest Company",
-            "Leadership Skills",
-            "International Team Experience",
-            "Notice Period",
-            
-            # Final Evaluation
-            "Overall Weighted Score",
-            "Selection Recommendation"
-        ]
+        # Create a dictionary to store the extracted values
+        result = {field: "Not Available" for field in expected_fields}
         
-        # Process the text line by line
-        current_key = None
+        # Split the AI output into lines for processing
+        lines = analysis.split('\n')
+        
+        # Process each line to extract fields
+        current_field = None
         current_value = []
         
-        lines = analysis.split('\n')
         for i, line in enumerate(lines):
-            # Check if this line starts a new key
+            line = line.strip()
+            if not line:  # Skip empty lines
+                continue
+                
+            # Check if this line starts a new field
+            new_field_found = False
+            
             if ':' in line:
-                # If we were building a previous value, save it
-                if current_key:
-                    result[current_key] = '\n'.join(current_value)
-                
-                # Start a new key-value pair
                 parts = line.split(':', 1)
-                key = parts[0].strip()
-                value = parts[1].strip() if len(parts) > 1 else ""
+                key = parts[0].strip().lower()
+                value = parts[1].strip()
                 
-                # Find matching key from our list
-                matched_key = None
-                for k in keys:
-                    if key.lower() == k.lower() or key.lower().startswith(k.lower()):
-                        matched_key = k
+                # Check if this matches any of our expected fields
+                for field, alternatives in expected_fields.items():
+                    if key in alternatives:
+                        # If we were building a previous field value, save it
+                        if current_field and current_value:
+                            result[current_field] = '\n'.join(current_value)
+                            
+                        # Start the new field
+                        current_field = field
+                        current_value = [value] if value else []
+                        new_field_found = True
                         break
-                
-                if matched_key:
-                    current_key = matched_key
-                    current_value = [value] if value else []
-                else:
-                    current_key = None
-                    current_value = []
-            # If no colon but we have an active key, this might be continuation of a value
-            elif current_key and line.strip():
-                current_value.append(line.strip())
             
-            # If we're at the last line and have an active key, save it
-            if i == len(lines) - 1 and current_key:
-                result[current_key] = '\n'.join(current_value)
-        
-        # Normalize specific fields
-        if "Total Experience" in result and "Total Experience (Years)" not in result:
-            value = result["Total Experience"]
-            # Extract just the number if possible
-            match = re.search(r'(\d+(?:\.\d+)?)', value)
-            result["Total Experience (Years)"] = match.group(1) if match else value
-        
-        if "Relevancy Score" in result and "Relevancy Score (0-100)" not in result:
-            value = result["Relevancy Score"]
-            # Extract just the number if possible
-            match = re.search(r'(\d+(?:\.\d+)?)', value)
-            result["Relevancy Score (0-100)"] = match.group(1) if match else value
-        
-        # Ensure all required fields have at least a default value
-        for key in [
-            "Job Applying For", 
-            "College Rating", 
-            "Job Stability", 
-            "Latest Company", 
-            "Leadership Skills", 
-            "International Team Experience", 
-            "Notice Period"
-        ]:
-            if key not in result:
-                result[key] = "Not Available"
-        
-        # Prepare the output in the expected order
-        expected_keys = [
-            # Basic attributes
-            "Candidate Name", 
-            "Total Experience (Years)", 
-            "Relevancy Score (0-100)", 
-            "Strong Matches Score",
-            "Strong Matches Reasoning", 
-            "Partial Matches Score",
-            "Partial Matches Reasoning",
-            "All Tech Skills",
-            "Relevant Tech Skills", 
-            "Degree", 
-            "College/University",
-            "Job Applying For",
-            "College Rating",
-            "Job Stability",
-            "Latest Company",
-            "Leadership Skills",
-            "International Team Experience",
-            "Notice Period",
+            # If this line doesn't start a new field and we're in the middle of a field, append to current value
+            if not new_field_found and current_field and line:
+                # Only append if the line doesn't look like it might be a mislabeled field
+                if ':' not in line or line.split(':', 1)[0].strip().lower() not in [alt for alts in expected_fields.values() for alt in alts]:
+                    current_value.append(line)
             
-            # Final Evaluation
-            "Overall Weighted Score",
-            "Selection Recommendation"
-        ]
+            # If we're at the last line and have an active field, save it
+            if i == len(lines) - 1 and current_field and current_value:
+                result[current_field] = '\n'.join(current_value)
         
-        extracted_data = [result.get(k, "Not Available") for k in expected_keys]
+        # Special handling for numeric fields
+        numeric_fields = ["Total Experience (Years)", "Relevancy Score (0-100)", "Strong Matches Score", 
+                         "Partial Matches Score", "Job Stability", "Overall Weighted Score"]
         
-        # Clean all extracted data
-        extracted_data = [clean_text(item) for item in extracted_data]
+        for field in numeric_fields:
+            if result[field] != "Not Available":
+                # Try to extract a numeric value
+                matches = re.search(r'(\d+(?:\.\d+)?)', result[field])
+                if matches:
+                    result[field] = matches.group(1)
+        
+        # Ensure fields like Job Stability are numeric
+        if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?$', result["Job Stability"]):
+            # Try to extract a number from the text
+            matches = re.search(r'(\d+(?:\.\d+)?)/10', result["Job Stability"])
+            if matches:
+                result["Job Stability"] = matches.group(1)
+            else:
+                matches = re.search(r'(\d+(?:\.\d+)?)', result["Job Stability"])
+                if matches:
+                    result["Job Stability"] = matches.group(1)
+        
+        # Normalize College Rating
+        if result["College Rating"] != "Not Available":
+            if "premium" in result["College Rating"].lower():
+                result["College Rating"] = "Premium"
+            elif "non" in result["College Rating"].lower() or "not" in result["College Rating"].lower():
+                result["College Rating"] = "Non-Premium"
+        
+        # Normalize International Team Experience
+        if result["International Team Experience"] != "Not Available":
+            if any(word in result["International Team Experience"].lower() for word in ["yes", "has", "worked", "experience"]):
+                if len(result["International Team Experience"]) < 5:  # Just "Yes" or similar
+                    result["International Team Experience"] = "Yes"
+            elif any(word in result["International Team Experience"].lower() for word in ["no", "not", "none"]):
+                if len(result["International Team Experience"]) < 5:  # Just "No" or similar
+                    result["International Team Experience"] = "No"
+        
+        # Clean all values
+        for field in result:
+            result[field] = clean_text(result[field])
+        
+        # Convert to list in the expected order
+        ordered_fields = list(expected_fields.keys())
+        extracted_data = [result.get(field, "Not Available") for field in ordered_fields]
         
         # Debugging: Show the extracted data
         with st.expander("Extracted Data (Debugging)"):
-            for k, v in zip(expected_keys, extracted_data):
+            for k, v in zip(ordered_fields, extracted_data):
                 st.write(f"{k}: {v}")
         
         return extracted_data
     
     except Exception as e:
         st.error(f"Error parsing AI response: {str(e)}")
-        st.error(f"Exception details: {str(e)}")
         import traceback
         st.error(traceback.format_exc())
         return None
@@ -264,10 +244,6 @@ def format_excel_workbook(wb, columns):
     header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
     header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
     header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    
-    # Section header style
-    section_font = Font(name='Calibri', size=11, bold=True)
-    section_fill = PatternFill(start_color='DCE6F1', end_color='DCE6F1', fill_type='solid')
     
     # Normal cell style
     normal_font = Font(name='Calibri', size=11)
@@ -302,36 +278,45 @@ def format_excel_workbook(wb, columns):
             
             # Apply centered alignment to score columns
             column_name = columns[col-1]
-            if "Score" in column_name and "Reasoning" not in column_name or "Recommendation" in column_name or "Job Stability" in column_name:
+            if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
                 cell.alignment = score_alignment
                 
-                # Conditional formatting for scores
-                if ("Score" in column_name or "Job Stability" in column_name) and cell.value not in ["Not Available", None]:
+                # Conditional formatting for numeric scores
+                if cell.value not in ["Not Available", None]:
                     try:
-                        score_value = float(cell.value)
-                        if score_value >= 8:
-                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                        elif score_value >= 6:
-                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                        else:
-                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                        if any(term in column_name for term in ["Score", "Job Stability"]):
+                            score_value = float(cell.value)
+                            if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
+                                cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                            elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
+                                cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                            else:
+                                cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
                     except (ValueError, TypeError):
                         pass
-                
-                # Conditional formatting for College Rating
-                if column_name == "College Rating" and cell.value not in ["Not Available", None]:
-                    if "premium" in str(cell.value).lower():
+            
+            # Special formatting for College Rating
+            if column_name == "College Rating" and cell.value not in ["Not Available", None]:
+                if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
+                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                elif "non-premium" in str(cell.value).lower():
+                    cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+            
+            # Special formatting for Selection Recommendation
+            if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None]:
+                if any(word in str(cell.value).lower() for word in ["recommend", "yes", "hire", "select"]):
+                    if "not" not in str(cell.value).lower() and "don't" not in str(cell.value).lower():
                         cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                    else:
-                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                else:
+                    cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
     
     # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
-        if "Skills" in column or "Reasoning" in column or "Leadership Skills" in column or "International Team Experience" in column:
+        if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience"]):
             ws.column_dimensions[column_letter].width = 40
-        elif "Recommendation" in column or "Notice Period" in column:
-            ws.column_dimensions[column_letter].width = 20
+        elif any(term in column for term in ["Recommendation", "Notice", "Company", "College"]):
+            ws.column_dimensions[column_letter].width = 25
         else:
             ws.column_dimensions[column_letter].width = 18
     
