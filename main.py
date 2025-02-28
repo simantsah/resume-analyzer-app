@@ -44,6 +44,9 @@ def analyze_resume(client, resume_text, job_description):
     Candidate Name: John Doe
     Total Experience (Years): 5
     ...and so on.
+    
+    IMPORTANT: Do not use Markdown formatting (like **, *, _, etc.) in your response.
+    Use plain text only.
 
     Resume:
     {resume_text}
@@ -56,7 +59,7 @@ def analyze_resume(client, resume_text, job_description):
         response = client.chat.completions.create(
             model="deepseek-r1-distill-qwen-32b",
             messages=[
-                {"role": "system", "content": "You are an expert resume analyzer and career coach. Provide analysis in a consistent format with clear labels."},
+                {"role": "system", "content": "You are an expert resume analyzer and career coach. Provide analysis in a consistent format with clear labels. Do not use Markdown formatting in your response."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
@@ -72,6 +75,24 @@ def analyze_resume(client, resume_text, job_description):
     except Exception as e:
         st.error(f"Error during analysis: {str(e)}")
         return None
+
+# Clean text by removing markdown and other formatting
+def clean_text(text):
+    if not text or text == "Not Available":
+        return text
+        
+    # Remove markdown formatting
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Bold
+    text = re.sub(r'\*(.*?)\*', r'\1', text)      # Italic
+    text = re.sub(r'__(.*?)__', r'\1', text)      # Underline
+    text = re.sub(r'_(.*?)_', r'\1', text)        # Italic alternative
+    text = re.sub(r'`(.*?)`', r'\1', text)        # Code
+    
+    # Remove bullet points and numbering
+    text = re.sub(r'^\s*[-•*]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    
+    return text.strip()
 
 # Parse AI response using flexible key-value extraction
 def parse_analysis(analysis):
@@ -103,6 +124,9 @@ def parse_analysis(analysis):
                 key = parts[0].strip()
                 value = parts[1].strip() if len(parts) > 1 else ""
                 
+                # Clean the value of markdown formatting
+                value = clean_text(value)
+                
                 # Find matching key from our list
                 matched_key = None
                 for k in keys:
@@ -113,9 +137,19 @@ def parse_analysis(analysis):
                 if matched_key:
                     # Normalize keys to match our expected format
                     if matched_key == "Total Experience" or matched_key == "Total Experience (Years)":
-                        result["Total Experience (Years)"] = value.split()[0] if value else "Not Available"  # Extract just the number
+                        # Extract just the number
+                        value_words = value.split()
+                        if value_words and value_words[0].isdigit():
+                            result["Total Experience (Years)"] = value_words[0]
+                        else:
+                            result["Total Experience (Years)"] = value
                     elif matched_key == "Relevancy Score" or matched_key == "Relevancy Score (0-100)":
-                        result["Relevancy Score (0-100)"] = value.split()[0] if value else "Not Available"  # Extract just the number
+                        # Extract just the number
+                        value_words = value.split()
+                        if value_words and value_words[0].replace('.', '', 1).isdigit():
+                            result["Relevancy Score (0-100)"] = value_words[0]
+                        else:
+                            result["Relevancy Score (0-100)"] = value
                     else:
                         result[matched_key] = value
         
@@ -135,6 +169,9 @@ def parse_analysis(analysis):
         ]
         
         extracted_data = [result.get(k, "Not Available") for k in expected_keys]
+        
+        # Clean all extracted data
+        extracted_data = [clean_text(item) for item in extracted_data]
         
         # Debugging: Show the extracted data
         with st.expander("Extracted Data (Debugging)"):
@@ -199,7 +236,25 @@ def main():
 
         # Create a temporary file for download
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
-            df.to_excel(tmpfile.name, index=False)
+            # Create Excel writer with pandas
+            with pd.ExcelWriter(tmpfile.name, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Resume Analysis')
+                
+                # Get the xlsxwriter workbook and worksheet objects
+                workbook = writer.book
+                worksheet = writer.sheets['Resume Analysis']
+                
+                # Add a format for wrapping text
+                wrap_format = workbook.add_format({'text_wrap': True})
+                
+                # Set column widths and text wrapping
+                for i, col in enumerate(df.columns):
+                    # Set column width based on content type
+                    if col in ["Relevant Tech Skills", "Tech Stack", "Tech Stack Experience"]:
+                        worksheet.set_column(i, i, 30, wrap_format)
+                    else:
+                        worksheet.set_column(i, i, 20, wrap_format)
+
             tmpfile_path = tmpfile.name
 
         st.success("Excel file created successfully!")
