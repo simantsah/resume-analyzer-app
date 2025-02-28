@@ -3,47 +3,9 @@ from groq import Groq
 import PyPDF2
 import os
 import re
-import time
-import logging
 import pandas as pd
 from dotenv import load_dotenv
-import uuid
-import boto3
-from botocore.exceptions import ClientError
 from datetime import datetime
-
-# Load environment variables
-try:
-    load_dotenv()
-except:
-    pass
-
-# Set up the DynamoDB client using environment variables
-try:
-    aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID')
-    aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    aws_region = os.environ.get('AWS_REGION', 'ap-south-1')
-
-    dynamodb = boto3.resource('dynamodb',
-                              region_name=aws_region,
-                              aws_access_key_id=aws_access_key_id,
-                              aws_secret_access_key=aws_secret_access_key)
-
-    def upload_item_to_dynamodb(table_name, item):
-        table = dynamodb.Table(table_name)
-        try:
-            response = table.put_item(Item=item)
-            print(f"Item uploaded successfully: {response}")
-        except ClientError as e:
-            print(f"Error uploading item: {e.response['Error']['Message']}")
-except:
-    pass
-
-st.set_page_config(
-    page_title="Resume Analyzer",
-    page_icon="📝",
-    layout="wide"
-)
 
 def initialize_groq_client():
     return Groq(api_key=os.environ.get("GROQ_API_KEY"))
@@ -56,27 +18,6 @@ def extract_text_from_pdf(pdf_file):
     except Exception as e:
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
-
-def extract_name(text):
-    match = re.search(r'(?i)\b(name|full name)[:\s]+([A-Za-z ]{2,})', text)
-    return match.group(2) if match else "Name not found"
-
-def extract_experience(text):
-    dates = re.findall(r'\b(\d{4})\b', text)
-    if dates:
-        years = [int(year) for year in dates if 1950 < int(year) <= datetime.now().year]
-        if years:
-            return max(years) - min(years)
-    return "Could not determine"
-
-def extract_college_and_degree(text):
-    college_match = re.search(r'(?i)(?:university|college|institute of technology|school of engineering)[:\s]*([A-Za-z &.,-]{5,})', text)
-    degree_match = re.search(r'(?i)\b(Bachelor|Master|PhD|Associate|Diploma)\b', text)
-    
-    college = college_match.group(1).strip() if college_match else "College not found"
-    degree = degree_match.group(1) if degree_match else "Degree not found"
-    
-    return degree, college
 
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
@@ -116,13 +57,39 @@ def analyze_resume(client, resume_text, job_description):
         st.error(f"Error during analysis: {str(e)}")
         return None
 
+def parse_analysis(analysis):
+    try:
+        pattern = re.compile(
+            r"Candidate Name:\s*(.*?)\n.*?"
+            r"Total Experience.*?(\d+).*?"
+            r"Relevancy Score.*?(\d+).*?"
+            r"Strong Matches Score.*?(\d+).*?"
+            r"Partial Matches Score.*?(\d+).*?"
+            r"Missing Skills Score.*?(\d+).*?"
+            r"Relevant Tech Skills:\s*(.*?)\n.*?"
+            r"Tech Stack:\s*(.*?)\n.*?"
+            r"Tech Stack Experience:\s*(.*?)\n.*?"
+            r"Degree:\s*(.*?)\n.*?"
+            r"College/University:\s*(.*?)\n",
+            re.DOTALL
+        )
+        
+        match = pattern.search(analysis)
+        if match:
+            return [match.group(i).strip() for i in range(1, 12)]
+        else:
+            return None
+    except Exception as e:
+        st.error(f"Error parsing AI response: {str(e)}")
+        return None
+
 def main():
     st.title("📝 Resume Analyzer")
     st.write("Upload your resumes and paste the job description to get a structured analysis")
 
     client = initialize_groq_client()
     uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
-    job_description = st.text_area("Paste the job description here", height=200, help="Paste the complete job description including requirements and qualifications")
+    job_description = st.text_area("Paste the job description here", height=200)
     
     results = []
     
@@ -130,76 +97,28 @@ def main():
         for uploaded_file in uploaded_files:
             st.subheader(f"Resume: {uploaded_file.name}")
             resume_text = extract_text_from_pdf(uploaded_file)
+            
             if resume_text:
-                candidate_name = extract_name(resume_text)
-                total_experience = extract_experience(resume_text)
-                degree, college = extract_college_and_degree(resume_text)
-                
-                st.write(f"**Candidate Name:** {candidate_name}")
-                st.write(f"**Total Experience:** {total_experience} years")
-                st.write(f"**Degree:** {degree}")
-                st.write(f"**College/University:** {college}")
-                
                 if st.button(f"Analyze {uploaded_file.name}"):
                     with st.spinner(f"Analyzing {uploaded_file.name}..."):
                         analysis = analyze_resume(client, resume_text, job_description)
                         if analysis:
-                            results.append([candidate_name, total_experience, degree, college, analysis])
+                            parsed_data = parse_analysis(analysis)
+                            if parsed_data:
+                                results.append(parsed_data)
+                            else:
+                                st.warning(f"Could not extract structured data for {uploaded_file.name}")
     
     if results:
-        structured_results = []
-        
-        for res in results:
-            candidate_name, total_experience, degree, college, analysis = res
+        df = pd.DataFrame(results, columns=[
+            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
+            "Strong Matches Score", "Partial Matches Score", "Missing Skills Score", 
+            "Relevant Tech Skills", "Tech Stack", "Tech Stack Experience", "Degree", 
+            "College/University"])
 
-            # Extract AI-generated values from the response
-            try:
-                matches = re.search(
-                    r'Candidate Name:\s*(.*)\n.*?Total Experience.*?(\d+).*?Relevancy Score.*?(\d+).*?Strong Matches Score.*?(\d+).*?Partial Matches Score.*?(\d+).*?Missing Skills Score.*?(\d+).*?Relevant Tech Skills:\s*(.*?)\n.*?Tech Stack:\s*(.*?)\n.*?Tech Stack Experience:\s*(.*?)\n.*?Degree:\s*(.*?)\n.*?College/University:\s*(.*?)\n',
-                    analysis,
-                    re.DOTALL
-                )
-
-                if matches:
-                    structured_results.append([
-                        matches.group(1).strip(),  # Candidate Name
-                        matches.group(2).strip(),  # Total Experience
-                        matches.group(3).strip(),  # Relevancy Score
-                        matches.group(4).strip(),  # Strong Matches Score
-                        matches.group(5).strip(),  # Partial Matches Score
-                        matches.group(6).strip(),  # Missing Skills Score
-                        matches.group(7).strip(),  # Relevant Tech Skills
-                        matches.group(8).strip(),  # Tech Stack
-                        matches.group(9).strip(),  # Tech Stack Experience
-                        matches.group(10).strip(), # Degree
-                        matches.group(11).strip()  # College/University
-                    ])
-                else:
-                    st.warning(f"Could not extract structured data for {candidate_name}")
-            
-            except Exception as e:
-                st.error(f"Error parsing AI response: {str(e)}")
-
-        # Create DataFrame
-        df = pd.DataFrame(structured_results, columns=[
-            "Candidate Name",
-            "Total Experience (Years)",
-            "Relevancy Score (0-100)",
-            "Strong Matches Score",
-            "Partial Matches Score",
-            "Missing Skills Score",
-            "Relevant Tech Skills",
-            "Tech Stack",
-            "Tech Stack Experience",
-            "Degree",
-            "College/University"
-        ])
-
-        # Save to Excel
         excel_file = "resume_analysis.xlsx"
         df.to_excel(excel_file, index=False)
         
-        # Provide download button
         st.download_button(
             label="📥 Download Excel Report",
             data=open(excel_file, "rb"),
