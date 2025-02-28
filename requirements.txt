@@ -3,3 +3,4 @@ PyPDF2
 python-dotenv
 boto3
 openpyxl
+xlsxwriter 
