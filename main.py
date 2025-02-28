@@ -64,7 +64,7 @@ def analyze_resume(client, resume_text, job_description):
     
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
+            model="mixtral-8x7b-32768",
             messages=[
                 {"role": "system", "content": "You are an expert resume analyzer. Your task is to extract and analyze key information from resumes against job descriptions. Format your response as a simple list of key-value pairs with NO markdown formatting."},
                 {"role": "user", "content": prompt}
