@@ -6,6 +6,7 @@ import re
 import pandas as pd
 from dotenv import load_dotenv
 from datetime import datetime
+import tempfile
 
 def initialize_groq_client():
     return Groq(api_key=os.environ.get("GROQ_API_KEY"))
@@ -121,15 +122,24 @@ def main():
             "Relevant Tech Skills", "Tech Stack", "Tech Stack Experience", "Degree", 
             "College/University"])
 
-        excel_file = "resume_analysis.xlsx"
-        df.to_excel(excel_file, index=False)
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
+            df.to_excel(tmpfile.name, index=False)
+            tmpfile_path = tmpfile.name
+
+        st.success("Excel file created successfully!")
         
-        st.download_button(
-            label="📥 Download Excel Report",
-            data=open(excel_file, "rb"),
-            file_name=excel_file,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        # Offer the file for download
+        with open(tmpfile_path, "rb") as file:
+            st.download_button(
+                label="📥 Download Excel Report",
+                data=file,
+                file_name="resume_analysis.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        # Clean up the temporary file
+        os.unlink(tmpfile_path)
 
 if __name__ == "__main__":
     main()
