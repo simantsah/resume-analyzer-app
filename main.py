@@ -83,6 +83,8 @@ def analyze_resume(client, resume_text, job_description):
     4. Strengths
     5. Areas for Improvement
     6. Suggested Resume Improvements
+    7. Tech Stack Identified
+    8. Relevant Experience in Tech Stack
     
     Resume:
     {resume_text}
@@ -170,6 +172,7 @@ def main():
         - Technical qualifications
         - Soft skills
         - Keywords match
+        - Tech stack & relevant experience
         """)
 
 if __name__ == "__main__":
