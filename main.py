@@ -73,7 +73,7 @@ def analyze_resume(client, resume_text, job_description):
     
     try:
         response = client.chat.completions.create(
-            model="deepseek-r1-distill-qwen-32b",
+            model="deepseek-r1-distill-qwen-70b",
             messages=[
                 {"role": "system", "content": "You are an expert resume analyzer and career coach. Provide analysis in a consistent format with clear labels. Do not use Markdown formatting in your response."},
                 {"role": "user", "content": prompt}
