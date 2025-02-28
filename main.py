@@ -2,6 +2,7 @@ import streamlit as st
 from groq import Groq
 import PyPDF2
 import os
+import re
 import time
 import logging
 import pandas as pd
@@ -10,8 +11,8 @@ import uuid
 import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime
-import re
 
+# Load environment variables
 try:
     load_dotenv()
 except:
@@ -146,10 +147,59 @@ def main():
                             results.append([candidate_name, total_experience, degree, college, analysis])
     
     if results:
-        df = pd.DataFrame(results, columns=["Candidate Name", "Total Experience", "Degree", "College/University", "Analysis"])
+        structured_results = []
+        
+        for res in results:
+            candidate_name, total_experience, degree, college, analysis = res
+
+            # Extract AI-generated values from the response
+            try:
+                matches = re.search(
+                    r'Candidate Name:\s*(.*)\n.*?Total Experience.*?(\d+).*?Relevancy Score.*?(\d+).*?Strong Matches Score.*?(\d+).*?Partial Matches Score.*?(\d+).*?Missing Skills Score.*?(\d+).*?Relevant Tech Skills:\s*(.*?)\n.*?Tech Stack:\s*(.*?)\n.*?Tech Stack Experience:\s*(.*?)\n.*?Degree:\s*(.*?)\n.*?College/University:\s*(.*?)\n',
+                    analysis,
+                    re.DOTALL
+                )
+
+                if matches:
+                    structured_results.append([
+                        matches.group(1).strip(),  # Candidate Name
+                        matches.group(2).strip(),  # Total Experience
+                        matches.group(3).strip(),  # Relevancy Score
+                        matches.group(4).strip(),  # Strong Matches Score
+                        matches.group(5).strip(),  # Partial Matches Score
+                        matches.group(6).strip(),  # Missing Skills Score
+                        matches.group(7).strip(),  # Relevant Tech Skills
+                        matches.group(8).strip(),  # Tech Stack
+                        matches.group(9).strip(),  # Tech Stack Experience
+                        matches.group(10).strip(), # Degree
+                        matches.group(11).strip()  # College/University
+                    ])
+                else:
+                    st.warning(f"Could not extract structured data for {candidate_name}")
+            
+            except Exception as e:
+                st.error(f"Error parsing AI response: {str(e)}")
+
+        # Create DataFrame
+        df = pd.DataFrame(structured_results, columns=[
+            "Candidate Name",
+            "Total Experience (Years)",
+            "Relevancy Score (0-100)",
+            "Strong Matches Score",
+            "Partial Matches Score",
+            "Missing Skills Score",
+            "Relevant Tech Skills",
+            "Tech Stack",
+            "Tech Stack Experience",
+            "Degree",
+            "College/University"
+        ])
+
+        # Save to Excel
         excel_file = "resume_analysis.xlsx"
         df.to_excel(excel_file, index=False)
         
+        # Provide download button
         st.download_button(
             label="📥 Download Excel Report",
             data=open(excel_file, "rb"),
