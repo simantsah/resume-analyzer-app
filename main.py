@@ -25,11 +25,13 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Call AI model to analyze resume
+# Call AI model to analyze resume with enhanced evaluation attributes
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
     Provide a structured analysis including:
+    
+    PART 1: Basic Analysis
     - Candidate Name
     - Total Experience (Years)
     - Relevancy Score (0-100)
@@ -41,7 +43,35 @@ def analyze_resume(client, resume_text, job_description):
     - Tech Stack Experience
     - Degree
     - College/University
-
+    
+    PART 2: Detailed Evaluation Attributes (Score each on a scale of 1-10)
+    
+    A. Core Competencies (30%)
+    1. Technical Skills Score (1-10): Evaluate alignment of technical skills with job requirements
+    2. Industry Knowledge Score (1-10): Assess understanding of industry, tools, and methodologies
+    3. Certifications & Training Score (1-10): Evaluate relevance of certifications and advanced training
+    
+    B. Work Experience & Responsibilities (25%)
+    1. Years of Experience Score (1-10): Compare required vs. actual experience
+    2. Job Role Alignment Score (1-10): Assess similarity between previous jobs and target position
+    3. Achievements & Impact Score (1-10): Evaluate presence of measurable achievements
+    
+    C. Education & Academic Background (10%)
+    1. Degree & Institution Ranking Score (1-10): Evaluate degree relevance and institution quality
+    
+    D. Soft Skills & Cultural Fit (15%)
+    1. Leadership & Teamwork Score (1-10): Assess leadership roles and team collaboration evidence
+    2. Communication & Interpersonal Skills Score (1-10): Evaluate communication and interpersonal skills
+    
+    E. Extra Factors (20%)
+    1. Stability & Career Progression Score (1-10): Assess growth in roles/responsibilities over time
+    2. Certifications, Languages, & Extras Score (1-10): Evaluate additional value-adding qualifications
+    3. Culture & Company Fit Score (1-10): Assess alignment with company culture based on job description
+    
+    PART 3: Final Evaluation
+    - Overall Weighted Score (0-100): Calculate the weighted sum based on percentages above
+    - Selection Recommendation: Recommend if score is ≥75% ("Recommend" or "Do Not Recommend")
+    
     Format your response with labels exactly as shown above, followed by a colon and the value.
     For example:
     Candidate Name: John Doe
@@ -66,7 +96,7 @@ def analyze_resume(client, resume_text, job_description):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=2000
+            max_tokens=3000
         )
         ai_response = response.choices[0].message.content
         
@@ -103,8 +133,9 @@ def parse_analysis(analysis):
         # Use a more reliable key-value extraction approach
         result = {}
         
-        # Define the keys we're looking for
+        # Define the keys we're looking for - now with the new evaluation attributes
         keys = [
+            # Basic attributes
             "Candidate Name", 
             "Total Experience", "Total Experience (Years)",
             "Relevancy Score", "Relevancy Score (0-100)",
@@ -115,7 +146,33 @@ def parse_analysis(analysis):
             "Tech Stack",
             "Tech Stack Experience",
             "Degree",
-            "College/University"
+            "College/University",
+            
+            # Core Competencies
+            "Technical Skills Score", 
+            "Industry Knowledge Score",
+            "Certifications & Training Score",
+            
+            # Work Experience
+            "Years of Experience Score",
+            "Job Role Alignment Score",
+            "Achievements & Impact Score",
+            
+            # Education
+            "Degree & Institution Ranking Score",
+            
+            # Soft Skills
+            "Leadership & Teamwork Score",
+            "Communication & Interpersonal Skills Score",
+            
+            # Extra Factors
+            "Stability & Career Progression Score",
+            "Certifications, Languages, & Extras Score",
+            "Culture & Company Fit Score",
+            
+            # Final Evaluation
+            "Overall Weighted Score",
+            "Selection Recommendation"
         ]
         
         # Process the text line by line
@@ -171,6 +228,7 @@ def parse_analysis(analysis):
         
         # Prepare the output in the expected order
         expected_keys = [
+            # Basic attributes
             "Candidate Name", 
             "Total Experience (Years)", 
             "Relevancy Score (0-100)", 
@@ -181,7 +239,33 @@ def parse_analysis(analysis):
             "Tech Stack", 
             "Tech Stack Experience", 
             "Degree", 
-            "College/University"
+            "College/University",
+            
+            # Core Competencies
+            "Technical Skills Score", 
+            "Industry Knowledge Score",
+            "Certifications & Training Score",
+            
+            # Work Experience
+            "Years of Experience Score",
+            "Job Role Alignment Score",
+            "Achievements & Impact Score",
+            
+            # Education
+            "Degree & Institution Ranking Score",
+            
+            # Soft Skills
+            "Leadership & Teamwork Score",
+            "Communication & Interpersonal Skills Score",
+            
+            # Extra Factors
+            "Stability & Career Progression Score",
+            "Certifications, Languages, & Extras Score",
+            "Culture & Company Fit Score",
+            
+            # Final Evaluation
+            "Overall Weighted Score",
+            "Selection Recommendation"
         ]
         
         extracted_data = [result.get(k, "Not Available") for k in expected_keys]
@@ -203,10 +287,90 @@ def parse_analysis(analysis):
         st.error(traceback.format_exc())
         return None
 
+# Format Excel with nice styling and organization
+def format_excel_workbook(wb, columns):
+    ws = wb.active
+    
+    # Define styles
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    
+    # Header style
+    header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    
+    # Section header style
+    section_font = Font(name='Calibri', size=11, bold=True)
+    section_fill = PatternFill(start_color='DCE6F1', end_color='DCE6F1', fill_type='solid')
+    
+    # Normal cell style
+    normal_font = Font(name='Calibri', size=11)
+    normal_alignment = Alignment(vertical='center', wrap_text=True)
+    
+    # Score cell style
+    score_alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Border style
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Apply header styles
+    for col_num, column in enumerate(columns, 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+    
+    # Apply styles to data cells and adjust column widths
+    for row in range(2, ws.max_row + 1):
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.font = normal_font
+            cell.alignment = normal_alignment
+            cell.border = thin_border
+            
+            # Apply centered alignment to score columns
+            column_name = columns[col-1]
+            if "Score" in column_name or "Recommendation" in column_name:
+                cell.alignment = score_alignment
+                
+                # Conditional formatting for scores
+                if "Score" in column_name and cell.value not in ["Not Available", None]:
+                    try:
+                        score_value = float(cell.value)
+                        if score_value >= 8:
+                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                        elif score_value >= 6:
+                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                        else:
+                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                    except (ValueError, TypeError):
+                        pass
+    
+    # Adjust column widths
+    for col_num, column in enumerate(columns, 1):
+        column_letter = openpyxl.utils.get_column_letter(col_num)
+        if "Skills" in column or "Stack" in column or "Tech" in column:
+            ws.column_dimensions[column_letter].width = 40
+        elif "Recommendation" in column:
+            ws.column_dimensions[column_letter].width = 20
+        else:
+            ws.column_dimensions[column_letter].width = 18
+    
+    # Freeze the header row
+    ws.freeze_panes = "A2"
+    
+    return wb
+
 # Main Streamlit App
 def main():
-    st.title("📝 Resume Analyzer")
-    st.write("Upload your resumes and paste the job description to get a structured analysis")
+    st.title("📝 Enhanced Resume Analyzer")
+    st.write("Upload your resumes and paste the job description to get a comprehensive analysis")
 
     # Load environment variables
     load_dotenv()
@@ -224,7 +388,10 @@ def main():
     if uploaded_files and job_description:
         # Add a button to analyze all resumes at once
         if st.button("Analyze All Resumes"):
-            for uploaded_file in uploaded_files:
+            progress_bar = st.progress(0)
+            total_files = len(uploaded_files)
+            
+            for i, uploaded_file in enumerate(uploaded_files):
                 st.subheader(f"Resume: {uploaded_file.name}")
                 with st.spinner(f"Analyzing {uploaded_file.name}..."):
                     resume_text = extract_text_from_pdf(uploaded_file)
@@ -240,69 +407,81 @@ def main():
                                 st.warning(f"Could not extract structured data for {uploaded_file.name}")
                     else:
                         st.error(f"Could not extract text from {uploaded_file.name}")
+                        
+                # Update progress bar
+                progress_bar.progress((i + 1) / total_files)
+            
+            # Complete the progress
+            progress_bar.progress(1.0)
     
     if results:
         st.subheader("Analysis Results")
         
         columns = [
+            # Basic attributes
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Strong Matches Score", "Partial Matches Score", "Missing Skills Score", 
             "Relevant Tech Skills", "Tech Stack", "Tech Stack Experience", "Degree", 
-            "College/University"
+            "College/University",
+            
+            # Core Competencies
+            "Technical Skills Score", 
+            "Industry Knowledge Score",
+            "Certifications & Training Score",
+            
+            # Work Experience
+            "Years of Experience Score",
+            "Job Role Alignment Score",
+            "Achievements & Impact Score",
+            
+            # Education
+            "Degree & Institution Ranking Score",
+            
+            # Soft Skills
+            "Leadership & Teamwork Score",
+            "Communication & Interpersonal Skills Score",
+            
+            # Extra Factors
+            "Stability & Career Progression Score",
+            "Certifications, Languages, & Extras Score",
+            "Culture & Company Fit Score",
+            
+            # Final Evaluation
+            "Overall Weighted Score",
+            "Selection Recommendation"
         ]
         
         df = pd.DataFrame(results, columns=columns)
         
-        # Display the dataframe
-        st.dataframe(df)
+        # Display a simplified version of the dataframe for the UI
+        display_columns = [
+            "Candidate Name", "Relevancy Score (0-100)", "Overall Weighted Score", 
+            "Selection Recommendation", "Technical Skills Score", "Job Role Alignment Score"
+        ]
+        st.dataframe(df[display_columns])
         
-        # Use StringIO approach to ensure Excel file contains all text properly
+        # Prepare full results for download
         with st.spinner("Preparing Excel file..."):
             # Create a temporary file for download
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
                 # Save DataFrame to Excel
                 df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
                 
-                # Now let's make sure each cell in the Excel file has the proper value
-                # Open the workbook and save it again with explicit string values
+                # Format the Excel file with better styling
                 wb = openpyxl.load_workbook(tmpfile.name)
-                ws = wb.active
-                
-                # Dictionary to store adjusted column widths
-                col_widths = {}
-                
-                # Start from row 2 (skip header)
-                for row in range(2, ws.max_row + 1):
-                    for col in range(1, ws.max_column + 1):
-                        cell = ws.cell(row=row, column=col)
-                        val = df.iloc[row-2, col-1]
-                        # Convert to string to avoid any conversion issues
-                        cell.value = str(val) if val != "Not Available" else "Not Available"
-                        
-                        # Track maximum column width needed
-                        if col not in col_widths:
-                            col_widths[col] = len(str(columns[col-1]))
-                        col_widths[col] = max(col_widths[col], min(100, len(str(val))))
-                
-                # Adjust column widths for better readability
-                for col, width in col_widths.items():
-                    # Set minimum width of 15 and maximum of 50
-                    adjusted_width = max(15, min(50, width + 2))
-                    ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = adjusted_width
-                
-                # Save the workbook
+                wb = format_excel_workbook(wb, columns)
                 wb.save(tmpfile.name)
                 tmpfile_path = tmpfile.name
             
-            st.success("Excel file created successfully!")
+            st.success("Excel file created successfully with enhanced evaluation metrics!")
             
             # Offer the file for download
             with open(tmpfile_path, "rb") as file:
                 file_data = file.read()
                 st.download_button(
-                    label="📥 Download Excel Report",
+                    label="📥 Download Comprehensive Excel Report",
                     data=file_data,
-                    file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    file_name=f"enhanced_resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
