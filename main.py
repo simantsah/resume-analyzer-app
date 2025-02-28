@@ -7,6 +7,9 @@ import pandas as pd
 from dotenv import load_dotenv
 from datetime import datetime
 import tempfile
+import json
+import openpyxl
+from io import BytesIO
 
 # Initialize AI client
 def initialize_groq_client():
@@ -116,16 +119,21 @@ def parse_analysis(analysis):
         ]
         
         # Process the text line by line
+        current_key = None
+        current_value = []
+        
         lines = analysis.split('\n')
-        for line in lines:
+        for i, line in enumerate(lines):
+            # Check if this line starts a new key
             if ':' in line:
-                # Split on first colon
+                # If we were building a previous value, save it
+                if current_key:
+                    result[current_key] = '\n'.join(current_value)
+                
+                # Start a new key-value pair
                 parts = line.split(':', 1)
                 key = parts[0].strip()
                 value = parts[1].strip() if len(parts) > 1 else ""
-                
-                # Clean the value of markdown formatting
-                value = clean_text(value)
                 
                 # Find matching key from our list
                 matched_key = None
@@ -135,23 +143,31 @@ def parse_analysis(analysis):
                         break
                 
                 if matched_key:
-                    # Normalize keys to match our expected format
-                    if matched_key == "Total Experience" or matched_key == "Total Experience (Years)":
-                        # Extract just the number
-                        value_words = value.split()
-                        if value_words and value_words[0].isdigit():
-                            result["Total Experience (Years)"] = value_words[0]
-                        else:
-                            result["Total Experience (Years)"] = value
-                    elif matched_key == "Relevancy Score" or matched_key == "Relevancy Score (0-100)":
-                        # Extract just the number
-                        value_words = value.split()
-                        if value_words and value_words[0].replace('.', '', 1).isdigit():
-                            result["Relevancy Score (0-100)"] = value_words[0]
-                        else:
-                            result["Relevancy Score (0-100)"] = value
-                    else:
-                        result[matched_key] = value
+                    current_key = matched_key
+                    current_value = [value] if value else []
+                else:
+                    current_key = None
+                    current_value = []
+            # If no colon but we have an active key, this might be continuation of a value
+            elif current_key and line.strip():
+                current_value.append(line.strip())
+            
+            # If we're at the last line and have an active key, save it
+            if i == len(lines) - 1 and current_key:
+                result[current_key] = '\n'.join(current_value)
+        
+        # Normalize specific fields
+        if "Total Experience" in result and "Total Experience (Years)" not in result:
+            value = result["Total Experience"]
+            # Extract just the number if possible
+            match = re.search(r'(\d+(?:\.\d+)?)', value)
+            result["Total Experience (Years)"] = match.group(1) if match else value
+        
+        if "Relevancy Score" in result and "Relevancy Score (0-100)" not in result:
+            value = result["Relevancy Score"]
+            # Extract just the number if possible
+            match = re.search(r'(\d+(?:\.\d+)?)', value)
+            result["Relevancy Score (0-100)"] = match.group(1) if match else value
         
         # Prepare the output in the expected order
         expected_keys = [
@@ -182,6 +198,9 @@ def parse_analysis(analysis):
     
     except Exception as e:
         st.error(f"Error parsing AI response: {str(e)}")
+        st.error(f"Exception details: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 # Main Streamlit App
@@ -225,34 +244,70 @@ def main():
     if results:
         st.subheader("Analysis Results")
         
-        df = pd.DataFrame(results, columns=[
+        columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Strong Matches Score", "Partial Matches Score", "Missing Skills Score", 
             "Relevant Tech Skills", "Tech Stack", "Tech Stack Experience", "Degree", 
-            "College/University"])
+            "College/University"
+        ]
+        
+        df = pd.DataFrame(results, columns=columns)
         
         # Display the dataframe
         st.dataframe(df)
-
-        # Create a temporary file for download
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
-            # Using the standard pandas to_excel method without xlsxwriter
-            df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis')
-            tmpfile_path = tmpfile.name
-
-        st.success("Excel file created successfully!")
         
-        # Offer the file for download
-        with open(tmpfile_path, "rb") as file:
-            st.download_button(
-                label="📥 Download Excel Report",
-                data=file,
-                file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        # Use StringIO approach to ensure Excel file contains all text properly
+        with st.spinner("Preparing Excel file..."):
+            # Create a temporary file for download
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
+                # Save DataFrame to Excel
+                df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
+                
+                # Now let's make sure each cell in the Excel file has the proper value
+                # Open the workbook and save it again with explicit string values
+                wb = openpyxl.load_workbook(tmpfile.name)
+                ws = wb.active
+                
+                # Dictionary to store adjusted column widths
+                col_widths = {}
+                
+                # Start from row 2 (skip header)
+                for row in range(2, ws.max_row + 1):
+                    for col in range(1, ws.max_column + 1):
+                        cell = ws.cell(row=row, column=col)
+                        val = df.iloc[row-2, col-1]
+                        # Convert to string to avoid any conversion issues
+                        cell.value = str(val) if val != "Not Available" else "Not Available"
+                        
+                        # Track maximum column width needed
+                        if col not in col_widths:
+                            col_widths[col] = len(str(columns[col-1]))
+                        col_widths[col] = max(col_widths[col], min(100, len(str(val))))
+                
+                # Adjust column widths for better readability
+                for col, width in col_widths.items():
+                    # Set minimum width of 15 and maximum of 50
+                    adjusted_width = max(15, min(50, width + 2))
+                    ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = adjusted_width
+                
+                # Save the workbook
+                wb.save(tmpfile.name)
+                tmpfile_path = tmpfile.name
+            
+            st.success("Excel file created successfully!")
+            
+            # Offer the file for download
+            with open(tmpfile_path, "rb") as file:
+                file_data = file.read()
+                st.download_button(
+                    label="📥 Download Excel Report",
+                    data=file_data,
+                    file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
-        # Clean up the temporary file
-        os.unlink(tmpfile_path)
+            # Clean up the temporary file
+            os.unlink(tmpfile_path)
 
 if __name__ == "__main__":
     main()
