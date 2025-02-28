@@ -34,6 +34,37 @@ def get_planful_competitors():
         "CCH Tagetik", "Infor CPM", "Syntellis", "Longview"
     ]
 
+# Extract LinkedIn URL directly from resume text
+def extract_linkedin_url(text):
+    if not text:
+        return ""
+    
+    # Pattern for LinkedIn URLs - supports various formats
+    patterns = [
+        r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*',  # Standard format
+        r'linkedin\.com/in/[\w-]+(?:/[\w-]+)*',                     # Without http(s)
+        r'www\.linkedin\.com/in/[\w-]+(?:/[\w-]+)*',                # With www but no http(s)
+        r'linkedin:\s*https?://(?:www\.)?linkedin\.com/in/[\w-]+',  # With linkedin: prefix
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        if matches:
+            # Ensure URL has proper prefix
+            url = matches[0]
+            if not url.startswith('http'):
+                url = 'https://' + ('' if url.startswith('www.') or url.startswith('linkedin.com') else 'www.') + url
+                # Handle cases where the url starts with 'linkedin.com'
+                if url.startswith('https://linkedin.com'):
+                    url = url.replace('https://linkedin.com', 'https://www.linkedin.com')
+            
+            # Clean any trailing punctuation or spaces
+            url = re.sub(r'[.,;:)\s]+$', '', url)
+            
+            return url
+    
+    return ""
+
 # Call AI model to analyze resume with enhanced evaluation attributes
 def analyze_resume(client, resume_text, job_description):
     competitors = get_planful_competitors()
@@ -129,7 +160,7 @@ def check_competitor_experience(work_history, competitor_list):
     return "No"
 
 # Parse AI response using improved key-value extraction
-def parse_analysis(analysis):
+def parse_analysis(analysis, resume_text=None):
     try:
         # Definition of expected fields with exact matches and alternative formats
         expected_fields = {
@@ -243,16 +274,34 @@ def parse_analysis(analysis):
                 if len(result["International Team Experience"]) < 5:  # Just "No" or similar
                     result["International Team Experience"] = "No"
         
-        # Handle URLs more reliably
-        # For LinkedIn URL - make it blank if not found
-        if result["LinkedIn URL"] != "Not Available":
-            linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/\S+', result["LinkedIn URL"])
-            if linkedin_match:
-                result["LinkedIn URL"] = linkedin_match.group(0)
+        # Handle LinkedIn URL extraction with improved method
+        if resume_text:
+            # First check if we already have a valid LinkedIn URL
+            if result["LinkedIn URL"] != "Not Available":
+                linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
+                if linkedin_match:
+                    result["LinkedIn URL"] = linkedin_match.group(0)
+                else:
+                    # Try to extract from the value itself if it's not already a URL
+                    extracted_url = extract_linkedin_url(result["LinkedIn URL"])
+                    if extracted_url:
+                        result["LinkedIn URL"] = extracted_url
+                    else:
+                        # If not found in the field, try from the resume text
+                        result["LinkedIn URL"] = extract_linkedin_url(resume_text)
+            else:
+                # If no LinkedIn URL was identified, search the resume text directly
+                result["LinkedIn URL"] = extract_linkedin_url(resume_text)
+        else:
+            # Fallback to original approach if resume text not available
+            if result["LinkedIn URL"] != "Not Available":
+                linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/\S+', result["LinkedIn URL"])
+                if linkedin_match:
+                    result["LinkedIn URL"] = linkedin_match.group(0)
+                else:
+                    result["LinkedIn URL"] = ""
             else:
                 result["LinkedIn URL"] = ""
-        else:
-            result["LinkedIn URL"] = ""
         
         # For Portfolio URL - use more specific extraction
         if result["Portfolio URL"] != "Not Available":
@@ -440,7 +489,7 @@ def main():
                     if resume_text:
                         analysis = analyze_resume(client, resume_text, job_description)
                         if analysis:
-                            parsed_data = parse_analysis(analysis)
+                            parsed_data = parse_analysis(analysis, resume_text)  # Pass resume_text to parse_analysis
                             if parsed_data:
                                 results.append(parsed_data)
                                 st.success(f"Successfully analyzed {uploaded_file.name}")
