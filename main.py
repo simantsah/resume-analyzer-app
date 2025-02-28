@@ -403,7 +403,10 @@ def main():
         # Create DataFrame with the extracted data
         df = pd.DataFrame(results_data, columns=columns)
         
-        # Display a simplified version of the dataframe for the UI
+        # Display the columns of the DataFrame for debugging
+        st.write("DataFrame Columns:", df.columns.tolist())
+        
+        # Define the columns to display
         display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Job Applying For", "College Rating", "Job Stability", "Latest Company",
@@ -414,7 +417,13 @@ def main():
         # Filter to only show columns that exist in our dataframe
         display_columns = [col for col in display_columns if col in df.columns]
         
-        st.dataframe(df[display_columns])
+        # Display the filtered display_columns for debugging
+        st.write("Filtered Display Columns:", display_columns)
+        
+        if display_columns:  # Check if there are any columns to display
+            st.dataframe(df[display_columns])
+        else:
+            st.warning("No columns to display.")
         
         # Prepare full results for download
         with st.spinner("Preparing Excel file..."):
