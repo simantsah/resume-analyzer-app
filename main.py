@@ -10,7 +10,6 @@ import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime
 import re
-import hashlib
 
 try:
     load_dotenv()
@@ -27,15 +26,6 @@ try:
                               region_name=aws_region,
                               aws_access_key_id=aws_access_key_id,
                               aws_secret_access_key=aws_secret_access_key)
-
-    def get_cached_analysis(table_name, resume_hash):
-        table = dynamodb.Table(table_name)
-        try:
-            response = table.get_item(Key={'resume_hash': resume_hash})
-            return response.get('Item')
-        except ClientError as e:
-            print(f"Error fetching item: {e.response['Error']['Message']}")
-            return None
 
     def upload_item_to_dynamodb(table_name, item):
         table = dynamodb.Table(table_name)
@@ -76,9 +66,6 @@ def extract_experience(text):
         if years:
             return max(years) - min(years)
     return "Could not determine"
-
-def generate_resume_hash(resume_text):
-    return hashlib.sha256(resume_text.encode()).hexdigest()
 
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
@@ -134,37 +121,22 @@ def main():
             if resume_text:
                 candidate_name = extract_name(resume_text)
                 total_experience = extract_experience(resume_text)
-                resume_hash = generate_resume_hash(resume_text)
-
-                # Check if analysis already exists in database
-                cached_analysis = get_cached_analysis('resume-analyzer', resume_hash)
-
-                if cached_analysis:
-                    analysis = cached_analysis['analysis']
-                    st.success("Loaded from cache! ✅")
-                else:
-                    with st.spinner(f"Analyzing {uploaded_file.name}..."):
-                        time.sleep(1)
-                        analysis = analyze_resume(client, resume_text, job_description)
-                        if analysis:
-                            # Store the result in DynamoDB for future use
-                            item = {
-                                'resume_hash': resume_hash,
-                                'candidate_name': candidate_name,
-                                'total_experience': total_experience,
-                                'analysis': analysis
-                            }
-                            upload_item_to_dynamodb('resume-analyzer', item)
-
+                
                 st.text_area("Extracted Text", resume_text, height=200, key=uploaded_file.name)
                 st.write(f"**Candidate Name:** {candidate_name}")
                 st.write(f"**Total Experience:** {total_experience} years")
+                
+                if st.button(f"Analyze {uploaded_file.name}"):
+                    with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                        time.sleep(1)
+                        analysis = analyze_resume(client, resume_text, job_description)
 
-                st.markdown(f"""
-                <div class="analysis-box-result"><h2>Analysis</h2>
-                {analysis}
-                </div>
-                """, unsafe_allow_html=True)
+                        if analysis:
+                            st.markdown(f"""
+                            <div class="analysis-box-result"><h2>Analysis</h2>
+                            {analysis}
+                            </div>
+                            """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
