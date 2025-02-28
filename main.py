@@ -4,6 +4,7 @@ import PyPDF2
 import os
 import time
 import logging
+import pandas as pd
 from dotenv import load_dotenv
 import uuid
 import boto3
@@ -79,26 +80,24 @@ def extract_college_and_degree(text):
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
-    Provide a detailed analysis including:
-    1. Candidate Name (Extracted from resume)
-    2. Total Experience (Find the least date of joining to the latest date of joining in years)
-    3. Relevancy Score as per Job Description (0-100)
-    4. Strong Matches (Assign a numeric point value)
-    5. Partial Matches (Assign a numeric point value)
-    6. Missing Skills (Assign a numeric point value)
-    7. Relevant Tech Skills (Compare the JD and the resume to find out the tech stack and relevancy)
-    8. Tech Stack (List all tech stack known to the candidate)
-    9. Tech Stack Experience (For each tech stack, rate the candidate as No Experience, Beginner, Intermediate, Advanced, or Expert)
-    10. Is the candidate a graduate or undergraduate?
-    11. College/University attended.
+    Provide a structured analysis including:
+    - Candidate Name
+    - Total Experience (Years)
+    - Relevancy Score (0-100)
+    - Strong Matches Score
+    - Partial Matches Score
+    - Missing Skills Score
+    - Relevant Tech Skills
+    - Tech Stack
+    - Tech Stack Experience
+    - Degree
+    - College/University
     
     Resume:
     {resume_text}
     
     Job Description:
     {job_description}
-    
-    Provide the analysis in a clear, structured format with numeric scores for the relevant points.
     """
     
     try:
@@ -118,13 +117,14 @@ def analyze_resume(client, resume_text, job_description):
 
 def main():
     st.title("📝 Resume Analyzer")
-    st.write("Upload your resumes and paste the job description to get a detailed analysis")
+    st.write("Upload your resumes and paste the job description to get a structured analysis")
 
     client = initialize_groq_client()
-
     uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
     job_description = st.text_area("Paste the job description here", height=200, help="Paste the complete job description including requirements and qualifications")
-
+    
+    results = []
+    
     if uploaded_files and job_description:
         for uploaded_file in uploaded_files:
             st.subheader(f"Resume: {uploaded_file.name}")
@@ -134,7 +134,6 @@ def main():
                 total_experience = extract_experience(resume_text)
                 degree, college = extract_college_and_degree(resume_text)
                 
-                st.text_area("Extracted Text", resume_text, height=200, key=uploaded_file.name)
                 st.write(f"**Candidate Name:** {candidate_name}")
                 st.write(f"**Total Experience:** {total_experience} years")
                 st.write(f"**Degree:** {degree}")
@@ -142,15 +141,21 @@ def main():
                 
                 if st.button(f"Analyze {uploaded_file.name}"):
                     with st.spinner(f"Analyzing {uploaded_file.name}..."):
-                        time.sleep(1)
                         analysis = analyze_resume(client, resume_text, job_description)
-
                         if analysis:
-                            st.markdown(f"""
-                            <div class="analysis-box-result"><h2>Analysis</h2>
-                            {analysis}
-                            </div>
-                            """, unsafe_allow_html=True)
+                            results.append([candidate_name, total_experience, degree, college, analysis])
+    
+    if results:
+        df = pd.DataFrame(results, columns=["Candidate Name", "Total Experience", "Degree", "College/University", "Analysis"])
+        excel_file = "resume_analysis.xlsx"
+        df.to_excel(excel_file, index=False)
+        
+        st.download_button(
+            label="📥 Download Excel Report",
+            data=open(excel_file, "rb"),
+            file_name=excel_file,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 if __name__ == "__main__":
     main()
