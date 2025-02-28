@@ -14,8 +14,8 @@ def initialize_groq_client():
 def extract_text_from_pdf(pdf_file):
     try:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = "".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
-        return text
+        text = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
+        return text if text else None
     except Exception as e:
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
@@ -63,18 +63,19 @@ def analyze_resume(client, resume_text, job_description):
 def parse_analysis(analysis):
     try:
         st.write("Debugging AI Output:", analysis)
+        
         pattern = re.compile(
-            r"Candidate Name:\s*(.*?)\n?" 
-            r".*?Total Experience.*?(\d+)?" 
-            r".*?Relevancy Score.*?(\d+)?" 
-            r".*?Strong Matches Score.*?(\d+)?" 
-            r".*?Partial Matches Score.*?(\d+)?" 
-            r".*?Missing Skills Score.*?(\d+)?" 
-            r".*?Relevant Tech Skills:\s*(.*?)\n?" 
-            r".*?Tech Stack:\s*(.*?)\n?" 
-            r".*?Tech Stack Experience:\s*(.*?)\n?" 
-            r".*?Degree:\s*(.*?)\n?" 
-            r".*?College/University:\s*(.*?)\n?",
+            r"Candidate Name:\s*(.*?)\n?"
+            r"Total Experience:\s*(\d+)?\s*years?\n?"
+            r"Relevancy Score:\s*(\d+)?\n?"
+            r"Strong Matches Score:\s*(\d+)?\n?"
+            r"Partial Matches Score:\s*(\d+)?\n?"
+            r"Missing Skills Score:\s*(\d+)?\n?"
+            r"Relevant Tech Skills:\s*(.*?)\n?"
+            r"Tech Stack:\s*(.*?)\n?"
+            r"Tech Stack Experience:\s*(.*?)\n?"
+            r"Degree:\s*(.*?)\n?"
+            r"College/University:\s*(.*?)\n?",
             re.DOTALL
         )
         
@@ -82,9 +83,28 @@ def parse_analysis(analysis):
         if match:
             extracted_data = [match.group(i).strip() if match.group(i) else "Not Available" for i in range(1, 12)]
             return extracted_data
-        else:
-            st.error("⚠️ AI response format not recognized. Please check AI output above.")
-            return None
+        
+        # Fallback: Handle unstructured AI output
+        data = {}
+        for line in analysis.split("\n"):
+            if ":" in line:
+                key, value = line.split(":", 1)
+                data[key.strip()] = value.strip()
+
+        extracted_data = [
+            data.get("Candidate Name", "Not Available"),
+            data.get("Total Experience", "Not Available"),
+            data.get("Relevancy Score", "Not Available"),
+            data.get("Strong Matches Score", "Not Available"),
+            data.get("Partial Matches Score", "Not Available"),
+            data.get("Missing Skills Score", "Not Available"),
+            data.get("Relevant Tech Skills", "Not Available"),
+            data.get("Tech Stack", "Not Available"),
+            data.get("Tech Stack Experience", "Not Available"),
+            data.get("Degree", "Not Available"),
+            data.get("College/University", "Not Available"),
+        ]
+        return extracted_data
     except Exception as e:
         st.error(f"Error parsing AI response: {str(e)}")
         return None
