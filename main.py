@@ -63,23 +63,24 @@ def parse_analysis(analysis):
     try:
         st.write("Debugging AI Output:", analysis)
         pattern = re.compile(
-            r"Candidate Name:\s*(.*?)\n" 
-            r".*?Total Experience.*?(\d+)" 
-            r".*?Relevancy Score.*?(\d+)" 
-            r".*?Strong Matches Score.*?(\d+)" 
-            r".*?Partial Matches Score.*?(\d+)" 
-            r".*?Missing Skills Score.*?(\d+)" 
-            r".*?Relevant Tech Skills:\s*(.*?)\n" 
-            r".*?Tech Stack:\s*(.*?)\n" 
-            r".*?Tech Stack Experience:\s*(.*?)\n" 
-            r".*?Degree:\s*(.*?)\n" 
-            r".*?College/University:\s*(.*?)\n",
+            r"Candidate Name:\s*(.*?)\n?" 
+            r".*?Total Experience.*?(\d+)?" 
+            r".*?Relevancy Score.*?(\d+)?" 
+            r".*?Strong Matches Score.*?(\d+)?" 
+            r".*?Partial Matches Score.*?(\d+)?" 
+            r".*?Missing Skills Score.*?(\d+)?" 
+            r".*?Relevant Tech Skills:\s*(.*?)\n?" 
+            r".*?Tech Stack:\s*(.*?)\n?" 
+            r".*?Tech Stack Experience:\s*(.*?)\n?" 
+            r".*?Degree:\s*(.*?)\n?" 
+            r".*?College/University:\s*(.*?)\n?",
             re.DOTALL
         )
         
         match = pattern.search(analysis)
         if match:
-            return [match.group(i).strip() for i in range(1, 12)]
+            extracted_data = [match.group(i).strip() if match.group(i) else "Not Available" for i in range(1, 12)]
+            return extracted_data
         else:
             st.error("⚠️ AI response format not recognized. Please check AI output above.")
             return None
