@@ -5,18 +5,56 @@ import os
 import time
 import logging
 from dotenv import load_dotenv
+import uuid
+import boto3
+from botocore.exceptions import ClientError
+from datetime import datetime
 import re
 import hashlib
-from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
 
 try:
     load_dotenv()
 except:
     pass
 
-# Google Sheets API Setup using Streamlit Connection
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Set up the DynamoDB client using environment variables
+try:
+    aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID')
+    aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+    aws_region = os.environ.get('AWS_REGION', 'ap-south-1')
+
+    dynamodb = boto3.resource('dynamodb',
+                              region_name=aws_region,
+                              aws_access_key_id=aws_access_key_id,
+                              aws_secret_access_key=aws_secret_access_key)
+
+    def get_cached_analysis(table_name, resume_hash):
+        table = dynamodb.Table(table_name)
+        try:
+            response = table.get_item(Key={'resume_hash': resume_hash})
+            return response.get('Item')
+        except ClientError as e:
+            print(f"Error fetching item: {e.response['Error']['Message']}")
+            return None
+
+    def upload_item_to_dynamodb(table_name, item):
+        table = dynamodb.Table(table_name)
+        try:
+            response = table.put_item(Item=item)
+            print(f"Item uploaded successfully: {response}")
+        except ClientError as e:
+            print(f"Error uploading item: {e.response['Error']['Message']}")
+except:
+    pass
+
+st.set_page_config(
+    page_title="Resume Analyzer",
+    page_icon="📝",
+    layout="wide"
+)
+
+def initialize_groq_client():
+    return Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 def extract_text_from_pdf(pdf_file):
     try:
@@ -80,27 +118,11 @@ def analyze_resume(client, resume_text, job_description):
         st.error(f"Error during analysis: {str(e)}")
         return None
 
-def update_google_sheets(candidate_name, total_experience, analysis, resume_hash):
-    try:
-        existing_records = conn.read()
-        
-        # Check if resume already exists in the sheet (by hash)
-        if not existing_records.empty and resume_hash in existing_records.values:
-            st.success("Data already exists in Google Sheets! ✅")
-            return
-
-        # Append new entry
-        new_entry = [[resume_hash, candidate_name, total_experience, analysis]]
-        conn.update(worksheet="ResumeAnalysis", data=new_entry, append=True)
-        st.success("Data successfully saved to Google Sheets! ✅")
-    except Exception as e:
-        st.error(f"Error updating Google Sheets: {str(e)}")
-
 def main():
     st.title("📝 Resume Analyzer")
     st.write("Upload your resumes and paste the job description to get a detailed analysis")
 
-    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    client = initialize_groq_client()
 
     uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
     job_description = st.text_area("Paste the job description here", height=200, help="Paste the complete job description including requirements and qualifications")
@@ -114,21 +136,25 @@ def main():
                 total_experience = extract_experience(resume_text)
                 resume_hash = generate_resume_hash(resume_text)
 
-                # Check if analysis already exists in Google Sheets
-                existing_records = conn.read()
-                cached_analysis = None
-                if not existing_records.empty and resume_hash in existing_records.values:
-                    cached_analysis = existing_records[existing_records[0] == resume_hash].values[0][3]
+                # Check if analysis already exists in database
+                cached_analysis = get_cached_analysis('resume-analyzer', resume_hash)
 
                 if cached_analysis:
-                    analysis = cached_analysis
-                    st.success("Loaded from Google Sheets! ✅")
+                    analysis = cached_analysis['analysis']
+                    st.success("Loaded from cache! ✅")
                 else:
                     with st.spinner(f"Analyzing {uploaded_file.name}..."):
                         time.sleep(1)
                         analysis = analyze_resume(client, resume_text, job_description)
                         if analysis:
-                            update_google_sheets(candidate_name, total_experience, analysis, resume_hash)
+                            # Store the result in DynamoDB for future use
+                            item = {
+                                'resume_hash': resume_hash,
+                                'candidate_name': candidate_name,
+                                'total_experience': total_experience,
+                                'analysis': analysis
+                            }
+                            upload_item_to_dynamodb('resume-analyzer', item)
 
                 st.text_area("Extracted Text", resume_text, height=200, key=uploaded_file.name)
                 st.write(f"**Candidate Name:** {candidate_name}")
