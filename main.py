@@ -25,46 +25,6 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# List of Planful competitors
-def get_planful_competitors():
-    return [
-        "Oracle", "SAP", "Workday", "Anaplan", "OneStream", "Adaptive Insights", "Prophix", 
-        "Board International", "Vena Solutions", "Jedox", "CCH Tagetik", "IBM Planning Analytics", 
-        "Solver", "Centage", "Blackline", "Host Analytics", "Longview Solutions", "insightsoftware", 
-        "Unit4", "Wolters Kluwer"
-    ]
-
-# Function to check if candidate worked at a competitor
-def check_competitor_experience(company_name):
-    competitors = get_planful_competitors()
-    if not company_name or company_name == "Not Available":
-        return "No"
-        
-    for competitor in competitors:
-        if competitor.lower() in company_name.lower():
-            return "Yes"
-    return "No"
-
-# Function to determine if a college is premier
-def is_premier_institute(college_name):
-    if not college_name or college_name == "Not Available":
-        return "Non-Premier Institute"
-        
-    premier_institutes = [
-        "iit", "indian institute of technology", "iisc", "indian institute of science",
-        "iim", "indian institute of management", "nit", "national institute of technology",
-        "bits", "birla institute of technology", "harvard", "stanford", "mit", 
-        "massachusetts institute of technology", "princeton", "yale", "columbia", 
-        "caltech", "california institute of technology", "oxford", "cambridge",
-        "university of california berkeley", "berkeley", "eth zurich", "imperial college",
-        "cornell", "university of chicago", "penn", "upenn", "university of pennsylvania"
-    ]
-    
-    for institute in premier_institutes:
-        if institute.lower() in college_name.lower():
-            return "Premier Institute"
-    return "Non-Premier Institute"
-
 # Call AI model to analyze resume with enhanced evaluation attributes
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
@@ -83,13 +43,14 @@ def analyze_resume(client, resume_text, job_description):
     Degree: [Highest degree only]
     College/University: [Institution name]
     Job Applying For: [Extract Job ID from job description]
+    College Rating: [Rate as "Premium" or "Non-Premium"]
+    Job Stability: [Rate 1-10, give 10 if ≥2 years per job]
     Latest Company: [Most recent employer]
-    Leadership Skills: [Analyze - Yes or No if candidate has leadership experience]
-    Leadership Skills Reasoning: [Explain leadership experience details in depth]
+    Leadership Skills: [Describe leadership experience]
     International Team Experience: [Yes/No + details about working with teams outside India]
     Notice Period: [Extract notice period info or "Immediate Joiner"]
     Overall Weighted Score: [Calculate final score 0-100]
-    Selection Recommendation: [ONLY use "Recommend" or "Not Recommend"]
+    Selection Recommendation: [Recommend or Do Not Recommend]
     
     Use EXACTLY these field labels in your response, followed by your analysis.
     DO NOT use any markdown formatting in your response.
@@ -105,7 +66,7 @@ def analyze_resume(client, resume_text, job_description):
         response = client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
-                {"role": "system", "content": "You are an expert resume analyzer. Your task is to extract and analyze key information from resumes against job descriptions. Format your response as a simple list of key-value pairs with NO markdown formatting. For Leadership Skills field, only output 'Yes' or 'No'. For Selection Recommendation, only output 'Recommend' or 'Not Recommend'."},
+                {"role": "system", "content": "You are an expert resume analyzer. Your task is to extract and analyze key information from resumes against job descriptions. Format your response as a simple list of key-value pairs with NO markdown formatting."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.5,
@@ -157,9 +118,10 @@ def parse_analysis(analysis):
             "Degree": ["degree", "highest degree", "qualification"],
             "College/University": ["college/university", "university", "college", "institution"],
             "Job Applying For": ["job applying for", "job id", "position applying for", "role applying for"],
+            "College Rating": ["college rating", "university rating", "institution rating"],
+            "Job Stability": ["job stability", "employment stability"],
             "Latest Company": ["latest company", "current company", "most recent company"],
-            "Leadership Skills": ["leadership skills", "leadership"],
-            "Leadership Skills Reasoning": ["leadership skills reasoning", "leadership experience", "leadership reasoning"],
+            "Leadership Skills": ["leadership skills", "leadership experience", "leadership"],
             "International Team Experience": ["international team experience", "global team experience", "international experience"],
             "Notice Period": ["notice period", "joining availability", "availability to join"],
             "Overall Weighted Score": ["overall weighted score", "overall score", "final score"],
@@ -214,7 +176,7 @@ def parse_analysis(analysis):
         
         # Special handling for numeric fields
         numeric_fields = ["Total Experience (Years)", "Relevancy Score (0-100)", "Strong Matches Score", 
-                         "Partial Matches Score", "Overall Weighted Score"]
+                         "Partial Matches Score", "Job Stability", "Overall Weighted Score"]
         
         for field in numeric_fields:
             if result[field] != "Not Available":
@@ -223,39 +185,31 @@ def parse_analysis(analysis):
                 if matches:
                     result[field] = matches.group(1)
         
-        # Normalize Leadership Skills to Yes/No
-        if result["Leadership Skills"] != "Not Available":
-            if any(word in result["Leadership Skills"].lower() for word in ["yes", "has", "demonstrated", "shown", "exhibited"]):
-                result["Leadership Skills"] = "Yes"
+        # Ensure fields like Job Stability are numeric
+        if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?$', result["Job Stability"]):
+            # Try to extract a number from the text
+            matches = re.search(r'(\d+(?:\.\d+)?)/10', result["Job Stability"])
+            if matches:
+                result["Job Stability"] = matches.group(1)
             else:
-                result["Leadership Skills"] = "No"
+                matches = re.search(r'(\d+(?:\.\d+)?)', result["Job Stability"])
+                if matches:
+                    result["Job Stability"] = matches.group(1)
         
-        # Check if no leadership reasoning was provided but leadership skills is Yes
-        if result["Leadership Skills Reasoning"] == "Not Available" and result["Leadership Skills"] == "Yes":
-            result["Leadership Skills Reasoning"] = "Has leadership experience (details not specified)"
-        
-        # Normalize Selection Recommendation
-        if result["Selection Recommendation"] != "Not Available":
-            if any(word in result["Selection Recommendation"].lower() for word in ["recommend", "yes", "hire", "select", "shortlist"]):
-                if "not" not in result["Selection Recommendation"].lower() and "don't" not in result["Selection Recommendation"].lower():
-                    result["Selection Recommendation"] = "Recommend"
-                else:
-                    result["Selection Recommendation"] = "Not Recommend"
-            else:
-                result["Selection Recommendation"] = "Not Recommend"
+        # Normalize College Rating
+        if result["College Rating"] != "Not Available":
+            if "premium" in result["College Rating"].lower():
+                result["College Rating"] = "Premium"
+            elif "non" in result["College Rating"].lower() or "not" in result["College Rating"].lower():
+                result["College Rating"] = "Non-Premium"
         
         # Normalize International Team Experience
         if result["International Team Experience"] != "Not Available":
             if any(word in result["International Team Experience"].lower() for word in ["yes", "has", "worked", "experience"]):
                 if len(result["International Team Experience"]) < 5:  # Just "Yes" or similar
                     result["International Team Experience"] = "Yes"
-                else:
-                    # Extract just the Yes/No part from longer text
-                    result["International Team Experience"] = "Yes"
             elif any(word in result["International Team Experience"].lower() for word in ["no", "not", "none"]):
                 if len(result["International Team Experience"]) < 5:  # Just "No" or similar
-                    result["International Team Experience"] = "No"
-                else:
                     result["International Team Experience"] = "No"
         
         # Clean all values
@@ -330,11 +284,11 @@ def format_excel_workbook(wb, columns):
                 # Conditional formatting for numeric scores
                 if cell.value not in ["Not Available", None]:
                     try:
-                        if any(term in column_name for term in ["Score"]):
+                        if any(term in column_name for term in ["Score", "Job Stability"]):
                             score_value = float(cell.value)
-                            if score_value >= 75:
+                            if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
                                 cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                            elif score_value >= 50:
+                            elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
                                 cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
                             else:
                                 cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
@@ -343,32 +297,24 @@ def format_excel_workbook(wb, columns):
             
             # Special formatting for College Rating
             if column_name == "College Rating" and cell.value not in ["Not Available", None]:
-                if "premier" in str(cell.value).lower() and "non" not in str(cell.value).lower():
+                if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                elif "non-premier" in str(cell.value).lower():
+                elif "non-premium" in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
             
             # Special formatting for Selection Recommendation
             if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None]:
-                if "Recommend" in str(cell.value) and "Not" not in str(cell.value):
-                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                if any(word in str(cell.value).lower() for word in ["recommend", "yes", "hire", "select"]):
+                    if "not" not in str(cell.value).lower() and "don't" not in str(cell.value).lower():
+                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
                 else:
                     cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
-                    
-            # Special formatting for Leadership Skills and International Team Experience
-            if column_name in ["Leadership Skills", "International Team Experience", "From Competitor"] and cell.value not in ["Not Available", None]:
-                if cell.value == "Yes":
-                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                else:
-                    cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
     
     # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
-        if any(term in column for term in ["Reasoning", "Leadership Skills Reasoning", "International"]):
+        if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience"]):
             ws.column_dimensions[column_letter].width = 40
-        elif any(term in column for term in ["All Tech Skills", "Relevant Tech Skills"]):
-            ws.column_dimensions[column_letter].width = 35
         elif any(term in column for term in ["Recommendation", "Notice", "Company", "College"]):
             ws.column_dimensions[column_letter].width = 25
         else:
@@ -444,36 +390,23 @@ def main():
             "College/University",
             "Job Applying For",
             "College Rating",
+            "Job Stability",
             "Latest Company",
-            "From Competitor", # New column for competitor check
-            "Leadership Skills", # Changed to just Yes/No
-            "Leadership Skills Reasoning", # New column for leadership details
+            "Leadership Skills",
             "International Team Experience",
             "Notice Period",
+            
             # Final Evaluation
             "Overall Weighted Score",
             "Selection Recommendation"
         ]
         
-        # Create DataFrame
         df = pd.DataFrame(results, columns=columns)
-        
-        # Process additional columns
-        # 1. College Rating using the premier institute function
-        df["College Rating"] = df["College/University"].apply(is_premier_institute)
-        
-        # 2. Add From Competitor column
-        df["From Competitor"] = df["Latest Company"].apply(check_competitor_experience)
-        
-        # 3. Ensure Selection Recommendation only has proper values
-        df["Selection Recommendation"] = df["Selection Recommendation"].apply(
-            lambda x: "Not Recommend" if x != "Recommend" else x
-        )
         
         # Display a simplified version of the dataframe for the UI
         display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
-            "Latest Company", "From Competitor", "College/University", "College Rating", 
+            "Job Applying For", "College Rating", "Job Stability", "Latest Company",
             "Leadership Skills", "International Team Experience", "Notice Period",
             "Overall Weighted Score", "Selection Recommendation"
         ]
