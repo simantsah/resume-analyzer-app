@@ -25,8 +25,20 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
+# Define Planful competitors
+def get_planful_competitors():
+    return [
+        "Anaplan", "Workday Adaptive Planning", "Oracle EPM", "Oracle Hyperion", 
+        "SAP BPC", "IBM Planning Analytics", "TM1", "Prophix", "Vena Solutions", 
+        "Jedox", "OneStream", "Board", "Centage", "Solver", "Kepion", "Host Analytics",
+        "CCH Tagetik", "Infor CPM", "Syntellis", "Longview"
+    ]
+
 # Call AI model to analyze resume with enhanced evaluation attributes
 def analyze_resume(client, resume_text, job_description):
+    competitors = get_planful_competitors()
+    competitors_list = ", ".join(competitors)
+    
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
     Provide a structured analysis with EXACT labeled fields as follows:
@@ -49,8 +61,10 @@ def analyze_resume(client, resume_text, job_description):
     Leadership Skills: [Describe leadership experience]
     International Team Experience: [Yes/No + details about working with teams outside India]
     Notice Period: [Extract notice period info or "Immediate Joiner"]
-    LinkedIn URL: [Extract LinkedIn profile URL if present, otherwise "Not Available"]
-    Portfolio URL: [Extract any portfolio, GitHub, or personal website URL if present, otherwise "Not Available"]
+    LinkedIn URL: [Extract LinkedIn profile URL if present, otherwise leave blank]
+    Portfolio URL: [Extract any portfolio, GitHub, or personal website URL if present, otherwise leave blank]
+    Work History: [List all previous companies and roles]
+    Competitor Experience: [Yes/No. Check if resume mentions experience at any of these companies: {competitors_list}]
     Overall Weighted Score: [Calculate final score 0-100]
     Selection Recommendation: [Recommend or Do Not Recommend]
     
@@ -103,6 +117,17 @@ def clean_text(text):
     
     return text.strip()
 
+# Manually check for competitor mentions in work history
+def check_competitor_experience(work_history, competitor_list):
+    if not work_history or work_history == "Not Available":
+        return "No"
+    
+    for competitor in competitor_list:
+        if competitor.lower() in work_history.lower():
+            return f"Yes - {competitor}"
+    
+    return "No"
+
 # Parse AI response using improved key-value extraction
 def parse_analysis(analysis):
     try:
@@ -128,6 +153,8 @@ def parse_analysis(analysis):
             "Notice Period": ["notice period", "joining availability", "availability to join"],
             "LinkedIn URL": ["linkedin url", "linkedin profile", "linkedin", "linkedin link"],
             "Portfolio URL": ["portfolio url", "portfolio", "github url", "github", "personal website", "personal url", "website"],
+            "Work History": ["work history", "employment history", "companies worked for", "previous companies"],
+            "Competitor Experience": ["competitor experience", "worked for competitor", "competitor", "competition experience"],
             "Overall Weighted Score": ["overall weighted score", "overall score", "final score"],
             "Selection Recommendation": ["selection recommendation", "hiring recommendation", "recommendation"]
         }
@@ -216,24 +243,37 @@ def parse_analysis(analysis):
                 if len(result["International Team Experience"]) < 5:  # Just "No" or similar
                     result["International Team Experience"] = "No"
         
-        # Extract URLs more reliably
-        # For LinkedIn URL
+        # Handle URLs more reliably
+        # For LinkedIn URL - make it blank if not found
         if result["LinkedIn URL"] != "Not Available":
             linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/\S+', result["LinkedIn URL"])
             if linkedin_match:
                 result["LinkedIn URL"] = linkedin_match.group(0)
-            elif "not available" in result["LinkedIn URL"].lower() or "not found" in result["LinkedIn URL"].lower() or "not mentioned" in result["LinkedIn URL"].lower():
-                result["LinkedIn URL"] = "Not Available"
+            else:
+                result["LinkedIn URL"] = ""
+        else:
+            result["LinkedIn URL"] = ""
         
-        # For Portfolio URL
+        # For Portfolio URL - use more specific extraction
         if result["Portfolio URL"] != "Not Available":
             # Look for common portfolio URLs
             portfolio_match = re.search(r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|behance\.net|dribbble\.com|[\w-]+\.(?:com|io|org|net))/\S+', result["Portfolio URL"])
             if portfolio_match:
                 result["Portfolio URL"] = portfolio_match.group(0)
             elif "not available" in result["Portfolio URL"].lower() or "not found" in result["Portfolio URL"].lower() or "not mentioned" in result["Portfolio URL"].lower():
-                result["Portfolio URL"] = "Not Available"
+                result["Portfolio URL"] = ""
+        else:
+            result["Portfolio URL"] = ""
         
+        # Double-check competitor experience using work history
+        # First, ensure we have work history data
+        if result["Work History"] == "Not Available" and "Latest Company" in result and result["Latest Company"] != "Not Available":
+            result["Work History"] = result["Latest Company"]  # Use at least the latest company
+
+        # Check for competitor experience either from AI or manually
+        if result["Competitor Experience"] == "Not Available" or not any(word in result["Competitor Experience"].lower() for word in ["yes", "no"]):
+            result["Competitor Experience"] = check_competitor_experience(result["Work History"], get_planful_competitors())
+            
         # Clean all values
         for field in result:
             result[field] = clean_text(result[field])
@@ -277,6 +317,9 @@ def format_excel_workbook(wb, columns):
     # URL cell style
     url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
     
+    # Competitor style
+    competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
+    
     # Border style
     thin_border = Border(
         left=Side(style='thin'),
@@ -307,7 +350,7 @@ def format_excel_workbook(wb, columns):
                 cell.alignment = score_alignment
                 
                 # Conditional formatting for numeric scores
-                if cell.value not in ["Not Available", None]:
+                if cell.value not in ["Not Available", None, ""]:
                     try:
                         if any(term in column_name for term in ["Score", "Job Stability"]):
                             score_value = float(cell.value)
@@ -321,14 +364,14 @@ def format_excel_workbook(wb, columns):
                         pass
             
             # Special formatting for College Rating
-            if column_name == "College Rating" and cell.value not in ["Not Available", None]:
+            if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
                 if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
                 elif "non-premium" in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
             
             # Special formatting for Selection Recommendation
-            if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None]:
+            if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
                 if any(word in str(cell.value).lower() for word in ["recommend", "yes", "hire", "select"]):
                     if "not" not in str(cell.value).lower() and "don't" not in str(cell.value).lower():
                         cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
@@ -339,11 +382,17 @@ def format_excel_workbook(wb, columns):
             if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
                 cell.font = url_font
                 cell.hyperlink = cell.value
+            
+            # Competitor formatting
+            if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
+                if cell.value.lower().startswith("yes"):
+                    cell.font = competitor_yes_font
+                    cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
     
     # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
-        if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience"]):
+        if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
             ws.column_dimensions[column_letter].width = 40
         elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
             ws.column_dimensions[column_letter].width = 30
@@ -370,6 +419,10 @@ def main():
     client = initialize_groq_client()
     uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
     job_description = st.text_area("Paste the job description here", height=200)
+    
+    # Show competitors list in an expander
+    with st.expander("Planful Competitors List"):
+        st.write(", ".join(get_planful_competitors()))
     
     results = []
     
@@ -427,6 +480,8 @@ def main():
             "Notice Period",
             "LinkedIn URL",
             "Portfolio URL",
+            "Work History",
+            "Competitor Experience",
             
             # Final Evaluation
             "Overall Weighted Score",
@@ -439,7 +494,7 @@ def main():
         display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Job Applying For", "College Rating", "Job Stability", "Latest Company",
-            "Leadership Skills", "LinkedIn URL", "Portfolio URL",
+            "Competitor Experience", "LinkedIn URL", "Portfolio URL",
             "Overall Weighted Score", "Selection Recommendation"
         ]
         st.dataframe(df[display_columns])
