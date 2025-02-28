@@ -131,7 +131,14 @@ def main():
                         time.sleep(1)
                         analysis = analyze_resume(client, resume_text, job_description)
                         if analysis:
-                            think_part, response_part = analysis.split('</think>')[0], analysis.split('</think>')[1]
+                            if "</think>" in analysis:
+                                parts = analysis.split("</think>")
+                                think_part = parts[0] if len(parts) > 0 else "No Thinking Process Found"
+                                response_part = parts[1] if len(parts) > 1 else "No Analysis Found"
+                            else:
+                                think_part = "No Thinking Process Found"
+                                response_part = analysis
+
                             st.markdown(f"""
                             <div class="analysis-box-think"><h2>Thinking</h2>{think_part}</div>
                             <div class="analysis-box-result"><h2>Response</h2>{response_part}</div>
@@ -154,8 +161,8 @@ def main():
                             }
                             try:
                                 upload_item_to_dynamodb(table_name, item)
-                            except:
-                                pass
+                            except Exception as e:
+                                st.error(f"Error uploading to DynamoDB: {str(e)}")
 
     with st.expander("💡 Tips for better results"):
         st.markdown("""
