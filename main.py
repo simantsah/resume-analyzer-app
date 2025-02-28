@@ -25,84 +25,6 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Define Planful competitors
-def get_planful_competitors():
-    # List of top 20 competitors of Planful in financial planning & analysis space
-    competitors = [
-        "Anaplan", 
-        "Oracle", 
-        "SAP", 
-        "Workday", 
-        "OneStream", 
-        "Prophix", 
-        "Vena Solutions", 
-        "Adaptive Insights", 
-        "Board International", 
-        "Centage", 
-        "Solver", 
-        "Jedox", 
-        "IBM Planning Analytics", 
-        "Longview", 
-        "Infor", 
-        "CCH Tagetik", 
-        "Kepion", 
-        "Pigment", 
-        "Unit4", 
-        "Cube Software"
-    ]
-    return competitors
-
-# Define premier institutes list
-def get_premier_institutes():
-    # List of premier institutes
-    premier_institutes = [
-        # US Top Universities
-        "MIT", "Massachusetts Institute of Technology", 
-        "Harvard", "Harvard University",
-        "Stanford", "Stanford University",
-        "Caltech", "California Institute of Technology",
-        "Princeton", "Princeton University",
-        "Yale", "Yale University",
-        "Columbia", "Columbia University",
-        "University of Chicago", "Chicago",
-        "University of Pennsylvania", "Penn", "UPenn",
-        "Johns Hopkins", "Johns Hopkins University",
-        "Northwestern", "Northwestern University",
-        "Duke", "Duke University",
-        "UC Berkeley", "University of California Berkeley", "Berkeley", "UCB",
-        "UCLA", "University of California Los Angeles",
-        "Carnegie Mellon", "Carnegie Mellon University", "CMU",
-        "Cornell", "Cornell University",
-        "University of Michigan", "Michigan",
-        "Georgia Tech", "Georgia Institute of Technology",
-        "University of Texas", "UT Austin",
-        
-        # Indian Institutes of Technology and other premier institutes
-        "IIT", "Indian Institute of Technology",
-        "IIM", "Indian Institute of Management",
-        "XLRI", "Xavier Labour Relations Institute",
-        "ISB", "Indian School of Business",
-        "BITS", "Birla Institute of Technology and Science",
-        "NIT", "National Institute of Technology",
-        "IIIT", "International Institute of Information Technology",
-        "Delhi University", "University of Delhi", "DU",
-        "JNU", "Jawaharlal Nehru University",
-        
-        # UK Universities
-        "Oxford", "University of Oxford",
-        "Cambridge", "University of Cambridge",
-        "Imperial College", "Imperial College London",
-        "LSE", "London School of Economics",
-        
-        # Other Global Universities
-        "ETH Zurich", "ETH",
-        "University of Toronto", "Toronto",
-        "National University of Singapore", "NUS",
-        "Tsinghua University", "Tsinghua",
-        "Peking University", "Peking"
-    ]
-    return premier_institutes
-
 # Call AI model to analyze resume with enhanced evaluation attributes
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
@@ -121,15 +43,14 @@ def analyze_resume(client, resume_text, job_description):
     Degree: [Highest degree only]
     College/University: [Institution name]
     Job Applying For: [Extract Job ID from job description]
-    College Rating: [Rate as "Premier Institute" or "Non-Premier Institute"]
+    College Rating: [Rate as "Premium" or "Non-Premium"]
     Job Stability: [Rate 1-10, give 10 if ≥2 years per job]
     Latest Company: [Most recent employer]
-    Leadership Skills Reasoning: [Describe leadership experience]
-    Leadership Skills: [Answer with only "Yes" or "No" based on leadership experience]
+    Leadership Skills: [Describe leadership experience]
     International Team Experience: [Yes/No + details about working with teams outside India]
     Notice Period: [Extract notice period info or "Immediate Joiner"]
     Overall Weighted Score: [Calculate final score 0-100]
-    Selection Recommendation: [Answer with only "Recommended" or "Not Recommended"]
+    Selection Recommendation: [Recommend or Do Not Recommend]
     
     Use EXACTLY these field labels in your response, followed by your analysis.
     DO NOT use any markdown formatting in your response.
@@ -180,35 +101,6 @@ def clean_text(text):
     
     return text.strip()
 
-# Check if candidate is from a competitor company
-def check_competitor_company(company_name):
-    competitors = get_planful_competitors()
-    if not company_name or company_name == "Not Available":
-        return "No"
-    
-    # Convert to lowercase for case-insensitive matching
-    company_lower = company_name.lower()
-    
-    for competitor in competitors:
-        if competitor.lower() in company_lower:
-            return "Yes"
-    
-    return "No"
-
-# Check if university is a premier institute
-def check_premier_institute(university):
-    if not university or university == "Not Available":
-        return "Non-Premier Institute"
-    
-    premier_institutes = get_premier_institutes()
-    university_lower = university.lower()
-    
-    for institute in premier_institutes:
-        if institute.lower() in university_lower:
-            return "Premier Institute"
-    
-    return "Non-Premier Institute"
-
 # Parse AI response using improved key-value extraction
 def parse_analysis(analysis):
     try:
@@ -229,8 +121,7 @@ def parse_analysis(analysis):
             "College Rating": ["college rating", "university rating", "institution rating"],
             "Job Stability": ["job stability", "employment stability"],
             "Latest Company": ["latest company", "current company", "most recent company"],
-            "Leadership Skills Reasoning": ["leadership skills reasoning", "leadership experience", "leadership skills"],
-            "Leadership Skills": ["leadership skills", "leadership"],
+            "Leadership Skills": ["leadership skills", "leadership experience", "leadership"],
             "International Team Experience": ["international team experience", "global team experience", "international experience"],
             "Notice Period": ["notice period", "joining availability", "availability to join"],
             "Overall Weighted Score": ["overall weighted score", "overall score", "final score"],
@@ -305,51 +196,28 @@ def parse_analysis(analysis):
                 if matches:
                     result["Job Stability"] = matches.group(1)
         
-        # Normalize College Rating to only Premier Institute or Non-Premier Institute
-        result["College Rating"] = check_premier_institute(result["College/University"])
-        
-        # Normalize Leadership Skills to only Yes or No
-        if result["Leadership Skills"] != "Not Available":
-            if any(word in result["Leadership Skills"].lower() for word in ["yes", "has", "demonstrated", "strong", "good"]):
-                result["Leadership Skills"] = "Yes"
-            elif "no" in result["Leadership Skills"].lower():
-                result["Leadership Skills"] = "No"
-            else:
-                # If reasoning mentions leadership, mark as Yes
-                if result["Leadership Skills Reasoning"] != "Not Available" and any(word in result["Leadership Skills Reasoning"].lower() for word in ["led", "managed", "supervised", "team lead", "manager", "director"]):
-                    result["Leadership Skills"] = "Yes"
-                else:
-                    result["Leadership Skills"] = "No"
+        # Normalize College Rating
+        if result["College Rating"] != "Not Available":
+            if "premium" in result["College Rating"].lower():
+                result["College Rating"] = "Premium"
+            elif "non" in result["College Rating"].lower() or "not" in result["College Rating"].lower():
+                result["College Rating"] = "Non-Premium"
         
         # Normalize International Team Experience
         if result["International Team Experience"] != "Not Available":
             if any(word in result["International Team Experience"].lower() for word in ["yes", "has", "worked", "experience"]):
                 if len(result["International Team Experience"]) < 5:  # Just "Yes" or similar
                     result["International Team Experience"] = "Yes"
-                else:
-                    result["International Team Experience"] = "Yes"
             elif any(word in result["International Team Experience"].lower() for word in ["no", "not", "none"]):
-                result["International Team Experience"] = "No"
-        
-        # Normalize Selection Recommendation to only Recommended or Not Recommended
-        if result["Selection Recommendation"] != "Not Available":
-            if any(word in result["Selection Recommendation"].lower() for word in ["recommend", "yes", "hire", "select"]):
-                if not any(word in result["Selection Recommendation"].lower() for word in ["not", "don't", "do not"]):
-                    result["Selection Recommendation"] = "Recommended"
-                else:
-                    result["Selection Recommendation"] = "Not Recommended"
-            else:
-                result["Selection Recommendation"] = "Not Recommended"
-        
-        # Add new field for Competitor Company check
-        result["From Competitor"] = check_competitor_company(result["Latest Company"])
+                if len(result["International Team Experience"]) < 5:  # Just "No" or similar
+                    result["International Team Experience"] = "No"
         
         # Clean all values
         for field in result:
             result[field] = clean_text(result[field])
         
-        # Convert to list in the expected order with the new Competitor field
-        ordered_fields = list(expected_fields.keys()) + ["From Competitor"]
+        # Convert to list in the expected order
+        ordered_fields = list(expected_fields.keys())
         extracted_data = [result.get(field, "Not Available") for field in ordered_fields]
         
         # Debugging: Show the extracted data
@@ -429,34 +297,23 @@ def format_excel_workbook(wb, columns):
             
             # Special formatting for College Rating
             if column_name == "College Rating" and cell.value not in ["Not Available", None]:
-                if "Premier Institute" in str(cell.value):
+                if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                else:
+                elif "non-premium" in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
             
             # Special formatting for Selection Recommendation
             if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None]:
-                if "Recommended" == str(cell.value):
-                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                if any(word in str(cell.value).lower() for word in ["recommend", "yes", "hire", "select"]):
+                    if "not" not in str(cell.value).lower() and "don't" not in str(cell.value).lower():
+                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
                 else:
                     cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
-            
-            # Special formatting for From Competitor
-            if column_name == "From Competitor" and cell.value not in ["Not Available", None]:
-                if "Yes" == str(cell.value):
-                    cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red (attention needed)
-            
-            # Special formatting for Leadership Skills and International Team Experience
-            if column_name in ["Leadership Skills", "International Team Experience"] and cell.value not in ["Not Available", None]:
-                if "Yes" == str(cell.value):
-                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                else:
-                    cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
     
     # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
-        if any(term in column for term in ["Skills", "Reasoning", "Experience"]):
+        if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience"]):
             ws.column_dimensions[column_letter].width = 40
         elif any(term in column for term in ["Recommendation", "Notice", "Company", "College"]):
             ws.column_dimensions[column_letter].width = 25
@@ -535,9 +392,7 @@ def main():
             "College Rating",
             "Job Stability",
             "Latest Company",
-            "From Competitor",
             "Leadership Skills",
-            "Leadership Skills Reasoning",
             "International Team Experience",
             "Notice Period",
             
@@ -551,7 +406,7 @@ def main():
         # Display a simplified version of the dataframe for the UI
         display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
-            "Job Applying For", "College Rating", "Latest Company", "From Competitor",
+            "Job Applying For", "College Rating", "Job Stability", "Latest Company",
             "Leadership Skills", "International Team Experience", "Notice Period",
             "Overall Weighted Score", "Selection Recommendation"
         ]
