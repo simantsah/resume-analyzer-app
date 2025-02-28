@@ -52,25 +52,28 @@ def analyze_resume(client, resume_text, job_description):
             temperature=0.7,
             max_tokens=2000
         )
-        return response.choices[0].message.content
+        ai_response = response.choices[0].message.content
+        st.text_area("AI Response Output", ai_response, height=300)
+        return ai_response
     except Exception as e:
         st.error(f"Error during analysis: {str(e)}")
         return None
 
 def parse_analysis(analysis):
     try:
+        st.write("Debugging AI Output:", analysis)
         pattern = re.compile(
-            r"Candidate Name:\s*(.*?)\n.*?"
-            r"Total Experience.*?(\d+).*?"
-            r"Relevancy Score.*?(\d+).*?"
-            r"Strong Matches Score.*?(\d+).*?"
-            r"Partial Matches Score.*?(\d+).*?"
-            r"Missing Skills Score.*?(\d+).*?"
-            r"Relevant Tech Skills:\s*(.*?)\n.*?"
-            r"Tech Stack:\s*(.*?)\n.*?"
-            r"Tech Stack Experience:\s*(.*?)\n.*?"
-            r"Degree:\s*(.*?)\n.*?"
-            r"College/University:\s*(.*?)\n",
+            r"Candidate Name:\s*(.*?)\n" 
+            r".*?Total Experience.*?(\d+)" 
+            r".*?Relevancy Score.*?(\d+)" 
+            r".*?Strong Matches Score.*?(\d+)" 
+            r".*?Partial Matches Score.*?(\d+)" 
+            r".*?Missing Skills Score.*?(\d+)" 
+            r".*?Relevant Tech Skills:\s*(.*?)\n" 
+            r".*?Tech Stack:\s*(.*?)\n" 
+            r".*?Tech Stack Experience:\s*(.*?)\n" 
+            r".*?Degree:\s*(.*?)\n" 
+            r".*?College/University:\s*(.*?)\n",
             re.DOTALL
         )
         
@@ -78,6 +81,7 @@ def parse_analysis(analysis):
         if match:
             return [match.group(i).strip() for i in range(1, 12)]
         else:
+            st.error("⚠️ AI response format not recognized. Please check AI output above.")
             return None
     except Exception as e:
         st.error(f"Error parsing AI response: {str(e)}")
