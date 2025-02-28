@@ -1,20 +1,18 @@
 import streamlit as st
 from groq import Groq
 import PyPDF2
-import io
 import os
 import time
 import logging
 from dotenv import load_dotenv
 import uuid
+import boto3
+from botocore.exceptions import ClientError
 
 try:
     load_dotenv()
 except:
     pass
-
-import boto3
-from botocore.exceptions import ClientError
 
 # Set up the DynamoDB client using environment variables
 try:
@@ -22,47 +20,34 @@ try:
     aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
     aws_region = os.environ.get('AWS_REGION', 'ap-south-1')
 
-
     dynamodb = boto3.resource('dynamodb',
-                          region_name=aws_region,
-                          aws_access_key_id=aws_access_key_id,
-                          aws_secret_access_key=aws_secret_access_key)
-
-
+                              region_name=aws_region,
+                              aws_access_key_id=aws_access_key_id,
+                              aws_secret_access_key=aws_secret_access_key)
 
     def upload_item_to_dynamodb(table_name, item):
         table = dynamodb.Table(table_name)
-        
         try:
             response = table.put_item(Item=item)
             print(f"Item uploaded successfully: {response}")
         except ClientError as e:
             print(f"Error uploading item: {e.response['Error']['Message']}")
-
 except:
     pass
 
-# Configure Streamlit page
 st.set_page_config(
     page_title="Resume Analyzer",
     page_icon="📝",
     layout="wide"
 )
 
-# Custom CSS for better styling
 st.markdown("""
     <style>
     .stApp {
         max-width: 1200px;
         margin: 0 auto;
     }
-    .analysis-box-think {
-        padding: 20px;
-        border-radius: 10px;
-        background-color: #f0f2f6;
-        margin: 10px 0;
-    }
-    .analysis-box-result {
+    .analysis-box-think, .analysis-box-result {
         padding: 20px;
         border-radius: 10px;
         background-color: #f0f2f6;
@@ -77,23 +62,18 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 def initialize_groq_client():
-    """Initialize and return Groq client"""
     return Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 def extract_text_from_pdf(pdf_file):
-    """Extract text from uploaded PDF file"""
     try:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
+        text = "".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
         return text
     except Exception as e:
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
 def analyze_resume(client, resume_text, job_description):
-    """Analyze resume against job description using Groq API"""
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
     Provide a detailed analysis including:
@@ -130,78 +110,57 @@ def analyze_resume(client, resume_text, job_description):
 
 def main():
     st.title("📝 Resume Analyzer")
-    st.write("Upload your resume and paste the job description to get a detailed analysis")
+    st.write("Upload your resumes and paste the job description to get a detailed analysis")
 
-    # Initialize Groq client
     client = initialize_groq_client()
 
-    # File upload for resume
-    uploaded_file = st.file_uploader("Upload your resume (PDF)", type=['pdf'])
-    
-    # Job description input
-    job_description = st.text_area(
-        "Paste the job description here",
-        height=200,
-        help="Paste the complete job description including requirements and qualifications"
-    )
+    uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
+    job_description = st.text_area("Paste the job description here", height=200, help="Paste the complete job description including requirements and qualifications")
 
-    # Create columns for resume text and analysis
-    if uploaded_file and job_description:
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            st.subheader("Extracted Resume Text")
-            # Extract and display resume text
+    if uploaded_files and job_description:
+        for uploaded_file in uploaded_files:
+            st.subheader(f"Resume: {uploaded_file.name}")
             resume_text = extract_text_from_pdf(uploaded_file)
             if resume_text:
-                st.text_area("Extracted Text", resume_text, height=400)
-            
-        with col2:
-            st.subheader("Analysis")
-            if st.button("Analyze Resume"):
-                with st.spinner("Analyzing your resume..."):
-                    # Add a small delay to show the spinner
-                    time.sleep(1)
-                    analysis = analyze_resume(client, resume_text, job_description)
-                    # logging.info(f"Analysis results: {analysis}")
-                    logging.error(f"Think: {analysis.split('</think>')[0]}")
-                    logging.error(f"Result {analysis.split('</think>')[1]}")
+                st.text_area("Extracted Text", resume_text, height=200, key=uploaded_file.name)
+                
+                if st.button(f"Analyze {uploaded_file.name}"):
+                    with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                        time.sleep(1)
+                        analysis = analyze_resume(client, resume_text, job_description)
+                        if analysis:
+                            think_part, response_part = analysis.split('</think>')[0], analysis.split('</think>')[1]
+                            st.markdown(f"""
+                            <div class="analysis-box-think"><h2>Thinking</h2>{think_part}</div>
+                            <div class="analysis-box-result"><h2>Response</h2>{response_part}</div>
+                            """, unsafe_allow_html=True)
+                            
+                            analysis_bytes = analysis.encode()
+                            st.download_button(
+                                label=f"Download Analysis for {uploaded_file.name}",
+                                data=analysis_bytes,
+                                file_name=f"{uploaded_file.name}_analysis.txt",
+                                mime="text/plain"
+                            )
 
-                    table_name = 'resume-analyzer'
-                    item = {
-                        'id': str(uuid.uuid4()),
-                        'resume_parse': resume_text,
-                        'think': analysis.split('</think>')[0],
-                        'response': analysis.split('</think>')[1]
-                    }
-                    try:
-                        upload_item_to_dynamodb(table_name, item)
-                    except:
-                        pass
+                            table_name = 'resume-analyzer'
+                            item = {
+                                'id': str(uuid.uuid4()),
+                                'resume_parse': resume_text,
+                                'think': think_part,
+                                'response': response_part
+                            }
+                            try:
+                                upload_item_to_dynamodb(table_name, item)
+                            except:
+                                pass
 
-                    if analysis:
-                        st.markdown(f"""<div class="analysis-box-think"><h2>Thinking</h2>{analysis.split('</think>')[0]}</div> 
-                        <div class="analysis-box-result"><h2>Response</h2>{analysis.split('</think>')[1]}</div>""", 
-                                  unsafe_allow_html=True)
-                        
-                        # Add download button for analysis
-                        analysis_bytes = analysis.encode()
-                        st.download_button(
-                            label="Download Analysis",
-                            data=analysis_bytes,
-                            file_name="resume_analysis.txt",
-                            mime="text/plain"
-                        )
-
-                        
-
-    # Add helpful information
     with st.expander("💡 Tips for better results"):
         st.markdown("""
         ### For best results:
-        1. Make sure your PDF is text-searchable (not scanned)
+        1. Make sure your PDFs are text-searchable (not scanned)
         2. Include the complete job description
-        3. Ensure your resume is up-to-date
+        3. Ensure your resumes are up-to-date
         4. Include relevant keywords from the job description
         
         ### What we analyze:
