@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 import uuid
 import boto3
 from botocore.exceptions import ClientError
+from datetime import datetime
+import re
 
 try:
     load_dotenv()
@@ -41,26 +43,6 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown("""
-    <style>
-    .stApp {
-        max-width: 1200px;
-        margin: 0 auto;
-    }
-    .analysis-box-think, .analysis-box-result {
-        padding: 20px;
-        border-radius: 10px;
-        background-color: #f0f2f6;
-        margin: 10px 0;
-    }
-    .match-score {
-        font-size: 24px;
-        font-weight: bold;
-        color: #0066cc;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
 def initialize_groq_client():
     return Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
@@ -73,18 +55,32 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
+def extract_name(text):
+    match = re.search(r'(?i)\b(name|full name)[:\s]+([A-Za-z ]{2,})', text)
+    return match.group(2) if match else "Name not found"
+
+def extract_experience(text):
+    dates = re.findall(r'\b(\d{4})\b', text)
+    if dates:
+        years = [int(year) for year in dates if 1950 < int(year) <= datetime.now().year]
+        if years:
+            return max(years) - min(years)
+    return "Could not determine"
+
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
     Provide a detailed analysis including:
-    1. Match Score (0-100)
-    2. Key Qualifications Match
-    3. Missing Skills/Requirements
-    4. Strengths
-    5. Areas for Improvement
-    6. Suggested Resume Improvements
-    7. Tech Stack Identified
-    8. Relevant Experience in Tech Stack
+    1. Candidate Name (Extracted from resume)
+    2. Total Experience (Find the least date of joining to the latest date of joining in years)
+    3. Match Score (0-100)
+    4. Relevancy Score as per Job Description (0-100)
+    5. Strong Matches (Assign a numeric point value)
+    6. Partial Matches (Assign a numeric point value)
+    7. Missing Skills (Assign a numeric point value)
+    8. Relevant Tech Skills (Compare the JD and the resume to find out the tech stack and relevancy)
+    9. Tech Stack (List all tech stack known to the candidate)
+    10. Tech Stack Experience (For each tech stack, rate the candidate as No Experience, Beginner, Intermediate, Advanced, or Expert)
     
     Resume:
     {resume_text}
@@ -124,63 +120,24 @@ def main():
             st.subheader(f"Resume: {uploaded_file.name}")
             resume_text = extract_text_from_pdf(uploaded_file)
             if resume_text:
+                candidate_name = extract_name(resume_text)
+                total_experience = extract_experience(resume_text)
+                
                 st.text_area("Extracted Text", resume_text, height=200, key=uploaded_file.name)
+                st.write(f"**Candidate Name:** {candidate_name}")
+                st.write(f"**Total Experience:** {total_experience} years")
                 
                 if st.button(f"Analyze {uploaded_file.name}"):
                     with st.spinner(f"Analyzing {uploaded_file.name}..."):
                         time.sleep(1)
                         analysis = analyze_resume(client, resume_text, job_description)
+
                         if analysis:
-                            if "</think>" in analysis:
-                                parts = analysis.split("</think>")
-                                think_part = parts[0] if len(parts) > 0 else "No Thinking Process Found"
-                                response_part = parts[1] if len(parts) > 1 else "No Analysis Found"
-                            else:
-                                think_part = "No Thinking Process Found"
-                                response_part = analysis
-
                             st.markdown(f"""
-                            <div class="analysis-box-think"><h2>Thinking</h2>{think_part}</div>
-                            <div class="analysis-box-result"><h2>Response</h2>{response_part}</div>
+                            <div class="analysis-box-result"><h2>Analysis</h2>
+                            {analysis}
+                            </div>
                             """, unsafe_allow_html=True)
-                            
-                            analysis_bytes = analysis.encode()
-                            st.download_button(
-                                label=f"Download Analysis for {uploaded_file.name}",
-                                data=analysis_bytes,
-                                file_name=f"{uploaded_file.name}_analysis.txt",
-                                mime="text/plain"
-                            )
-
-                            table_name = 'resume-analyzer'
-                            item = {
-                                'id': str(uuid.uuid4()),
-                                'resume_parse': resume_text,
-                                'think': think_part,
-                                'response': response_part
-                            }
-                            try:
-                                upload_item_to_dynamodb(table_name, item)
-                            except Exception as e:
-                                st.error(f"Error uploading to DynamoDB: {str(e)}")
-
-    with st.expander("💡 Tips for better results"):
-        st.markdown("""
-        ### For best results:
-        1. Make sure your PDFs are text-searchable (not scanned)
-        2. Include the complete job description
-        3. Ensure your resumes are up-to-date
-        4. Include relevant keywords from the job description
-        
-        ### What we analyze:
-        - Skills match
-        - Experience alignment
-        - Education requirements
-        - Technical qualifications
-        - Soft skills
-        - Keywords match
-        - Tech stack & relevant experience
-        """)
 
 if __name__ == "__main__":
     main()
