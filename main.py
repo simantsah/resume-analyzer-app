@@ -73,14 +73,13 @@ def analyze_resume(client, resume_text, job_description):
     Provide a detailed analysis including:
     1. Candidate Name (Extracted from resume)
     2. Total Experience (Find the least date of joining to the latest date of joining in years)
-    3. Match Score (0-100)
-    4. Relevancy Score as per Job Description (0-100)
-    5. Strong Matches (Assign a numeric point value)
-    6. Partial Matches (Assign a numeric point value)
-    7. Missing Skills (Assign a numeric point value)
-    8. Relevant Tech Skills (Compare the JD and the resume to find out the tech stack and relevancy)
-    9. Tech Stack (List all tech stack known to the candidate)
-    10. Tech Stack Experience (For each tech stack, rate the candidate as No Experience, Beginner, Intermediate, Advanced, or Expert)
+    3. Relevancy Score as per Job Description (0-100)
+    4. Strong Matches (Assign a numeric point value)
+    5. Partial Matches (Assign a numeric point value)
+    6. Missing Skills (Assign a numeric point value)
+    7. Relevant Tech Skills (Compare the JD and the resume to find out the tech stack and relevancy)
+    8. Tech Stack (List all tech stack known to the candidate)
+    9. Tech Stack Experience (For each tech stack, rate the candidate as No Experience, Beginner, Intermediate, Advanced, or Expert)
     
     Resume:
     {resume_text}
