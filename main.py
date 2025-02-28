@@ -66,24 +66,24 @@ def analyze_resume(client, resume_text, job_description):
         st.error(f"Error during analysis: {str(e)}")
         return None
 
-# Parse the AI response using regex
+# Parse AI response using flexible extraction
 def parse_analysis(analysis):
     try:
         st.write("Debugging AI Output:", analysis)
-        
-        # Updated regex pattern for flexible matching
+
+        # More flexible regex pattern to match various response formats
         pattern = re.compile(
             r"Candidate Name:\s*(.*?)\n?"
-            r"Total Experience.*?:\s*(\d+)?\s*years?\n?"
-            r"Relevancy Score.*?:\s*(\d+)?\n?"
-            r"Strong Matches Score.*?:\s*(\d+)?\n?"
-            r"Partial Matches Score.*?:\s*(\d+)?\n?"
-            r"Missing Skills Score.*?:\s*(\d+)?\n?"
-            r"Relevant Tech Skills:\s*(.*?)\n?"
-            r"Tech Stack:\s*(.*?)\n?"
-            r"Tech Stack Experience:\s*(.*?)\n?"
-            r"Degree:\s*(.*?)\n?"
-            r"College/University:\s*(.*?)\n?",
+            r".*?Total Experience.*?:\s*(\d+)?\s*years?\n?"
+            r".*?Relevancy Score.*?:\s*(\d+)?\n?"
+            r".*?Strong Matches Score.*?:\s*(\d+)?\n?"
+            r".*?Partial Matches Score.*?:\s*(\d+)?\n?"
+            r".*?Missing Skills Score.*?:\s*(\d+)?\n?"
+            r".*?Relevant Tech Skills:\s*(.*?)\n?"
+            r".*?Tech Stack:\s*(.*?)\n?"
+            r".*?Tech Stack Experience:\s*(.*?)\n?"
+            r".*?Degree:\s*(.*?)\n?"
+            r".*?College/University:\s*(.*?)\n?",
             re.DOTALL
         )
         
