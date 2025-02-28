@@ -5,46 +5,31 @@ import os
 import time
 import logging
 from dotenv import load_dotenv
-import uuid
-import boto3
-from botocore.exceptions import ClientError
-from datetime import datetime
 import re
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
+import hashlib
 
 try:
     load_dotenv()
 except:
     pass
 
-# Set up the DynamoDB client using environment variables
-try:
-    aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID')
-    aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    aws_region = os.environ.get('AWS_REGION', 'ap-south-1')
+# Google Sheets API Setup
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1ptmDeXbe6MzapC0cPQIrKBF3XoNkvk9JnZ5nMpG1GY0/edit?gid=0#gid=0"
+CREDENTIALS_FILE = "credentials.json"  # Place your Google Sheets credentials JSON file in the working directory
 
-    dynamodb = boto3.resource('dynamodb',
-                              region_name=aws_region,
-                              aws_access_key_id=aws_access_key_id,
-                              aws_secret_access_key=aws_secret_access_key)
+def connect_to_gsheets():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+    client = gspread.authorize(creds)
+    return client
 
-    def upload_item_to_dynamodb(table_name, item):
-        table = dynamodb.Table(table_name)
-        try:
-            response = table.put_item(Item=item)
-            print(f"Item uploaded successfully: {response}")
-        except ClientError as e:
-            print(f"Error uploading item: {e.response['Error']['Message']}")
-except:
-    pass
-
-st.set_page_config(
-    page_title="Resume Analyzer",
-    page_icon="📝",
-    layout="wide"
-)
-
-def initialize_groq_client():
-    return Groq(api_key=os.environ.get("GROQ_API_KEY"))
+def get_gsheet():
+    client = connect_to_gsheets()
+    sheet = client.open_by_url(SHEET_URL).sheet1  # Select the first sheet
+    return sheet
 
 def extract_text_from_pdf(pdf_file):
     try:
@@ -66,6 +51,9 @@ def extract_experience(text):
         if years:
             return max(years) - min(years)
     return "Could not determine"
+
+def generate_resume_hash(resume_text):
+    return hashlib.sha256(resume_text.encode()).hexdigest()
 
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
@@ -105,11 +93,25 @@ def analyze_resume(client, resume_text, job_description):
         st.error(f"Error during analysis: {str(e)}")
         return None
 
+def update_google_sheets(candidate_name, total_experience, analysis, resume_hash):
+    sheet = get_gsheet()
+    existing_records = sheet.get_all_values()
+
+    # Check if resume already exists in the sheet (by hash)
+    for row in existing_records:
+        if len(row) > 0 and row[0] == resume_hash:
+            st.success("Data already exists in Google Sheets! ✅")
+            return
+
+    # Append new entry
+    sheet.append_row([resume_hash, candidate_name, total_experience, analysis])
+    st.success("Data successfully saved to Google Sheets! ✅")
+
 def main():
     st.title("📝 Resume Analyzer")
     st.write("Upload your resumes and paste the job description to get a detailed analysis")
 
-    client = initialize_groq_client()
+    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
     uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
     job_description = st.text_area("Paste the job description here", height=200, help="Paste the complete job description including requirements and qualifications")
@@ -121,22 +123,36 @@ def main():
             if resume_text:
                 candidate_name = extract_name(resume_text)
                 total_experience = extract_experience(resume_text)
-                
-                st.text_area("Extracted Text", resume_text, height=200, key=uploaded_file.name)
-                st.write(f"**Candidate Name:** {candidate_name}")
-                st.write(f"**Total Experience:** {total_experience} years")
-                
-                if st.button(f"Analyze {uploaded_file.name}"):
+                resume_hash = generate_resume_hash(resume_text)
+
+                # Check if analysis already exists in Google Sheets
+                sheet = get_gsheet()
+                existing_records = sheet.get_all_values()
+                cached_analysis = None
+                for row in existing_records:
+                    if len(row) > 0 and row[0] == resume_hash:
+                        cached_analysis = row[3]
+                        break
+
+                if cached_analysis:
+                    analysis = cached_analysis
+                    st.success("Loaded from Google Sheets! ✅")
+                else:
                     with st.spinner(f"Analyzing {uploaded_file.name}..."):
                         time.sleep(1)
                         analysis = analyze_resume(client, resume_text, job_description)
-
                         if analysis:
-                            st.markdown(f"""
-                            <div class="analysis-box-result"><h2>Analysis</h2>
-                            {analysis}
-                            </div>
-                            """, unsafe_allow_html=True)
+                            update_google_sheets(candidate_name, total_experience, analysis, resume_hash)
+
+                st.text_area("Extracted Text", resume_text, height=200, key=uploaded_file.name)
+                st.write(f"**Candidate Name:** {candidate_name}")
+                st.write(f"**Total Experience:** {total_experience} years")
+
+                st.markdown(f"""
+                <div class="analysis-box-result"><h2>Analysis</h2>
+                {analysis}
+                </div>
+                """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
