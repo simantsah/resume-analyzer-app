@@ -54,7 +54,10 @@ def analyze_resume(client, resume_text, job_description):
             max_tokens=2000
         )
         ai_response = response.choices[0].message.content
-        st.text_area("AI Response Output", ai_response, height=300)
+        
+        # Debugging: Display AI response
+        st.text_area("AI Response Output (Debugging)", ai_response, height=300)
+        
         return ai_response
     except Exception as e:
         st.error(f"Error during analysis: {str(e)}")
@@ -64,13 +67,14 @@ def parse_analysis(analysis):
     try:
         st.write("Debugging AI Output:", analysis)
         
+        # Updated regex pattern
         pattern = re.compile(
             r"Candidate Name:\s*(.*?)\n?"
-            r"Total Experience:\s*(\d+)?\s*years?\n?"
-            r"Relevancy Score:\s*(\d+)?\n?"
-            r"Strong Matches Score:\s*(\d+)?\n?"
-            r"Partial Matches Score:\s*(\d+)?\n?"
-            r"Missing Skills Score:\s*(\d+)?\n?"
+            r"Total Experience.*?:\s*(\d+)?\s*years?\n?"
+            r"Relevancy Score.*?:\s*(\d+)?\n?"
+            r"Strong Matches Score.*?:\s*(\d+)?\n?"
+            r"Partial Matches Score.*?:\s*(\d+)?\n?"
+            r"Missing Skills Score.*?:\s*(\d+)?\n?"
             r"Relevant Tech Skills:\s*(.*?)\n?"
             r"Tech Stack:\s*(.*?)\n?"
             r"Tech Stack Experience:\s*(.*?)\n?"
@@ -85,6 +89,16 @@ def parse_analysis(analysis):
             return extracted_data
         
         # Fallback: Handle unstructured AI output
+        st.warning("Regex failed. Using fallback parsing.")
+        return fallback_parse_analysis(analysis)
+    
+    except Exception as e:
+        st.error(f"Error parsing AI response: {str(e)}")
+        return None
+
+def fallback_parse_analysis(analysis):
+    """Fallback method for extracting data from AI response when regex fails."""
+    try:
         data = {}
         for line in analysis.split("\n"):
             if ":" in line:
@@ -106,7 +120,7 @@ def parse_analysis(analysis):
         ]
         return extracted_data
     except Exception as e:
-        st.error(f"Error parsing AI response: {str(e)}")
+        st.error(f"Error in fallback parsing: {str(e)}")
         return None
 
 def main():
@@ -142,7 +156,7 @@ def main():
             "Relevant Tech Skills", "Tech Stack", "Tech Stack Experience", "Degree", 
             "College/University"])
 
-        # Create a temporary file
+        # Create a temporary file for download
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
             df.to_excel(tmpfile.name, index=False)
             tmpfile_path = tmpfile.name
