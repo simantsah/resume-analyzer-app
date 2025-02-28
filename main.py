@@ -225,13 +225,13 @@ def parse_analysis(analysis):
             for k, v in zip(ordered_fields, extracted_data):
                 st.write(f"{k}: {v}")
         
-        return extracted_data
+        return ordered_fields, extracted_data
     
     except Exception as e:
         st.error(f"Error parsing AI response: {str(e)}")
         import traceback
         st.error(traceback.format_exc())
-        return None
+        return None, None
 
 # Format Excel with nice styling and organization
 def format_excel_workbook(wb, columns):
@@ -341,7 +341,8 @@ def main():
     uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
     job_description = st.text_area("Paste the job description here", height=200)
     
-    results = []
+    results_data = []
+    columns = None
     
     if uploaded_files and job_description:
         # Add a button to analyze all resumes at once
@@ -357,9 +358,11 @@ def main():
                     if resume_text:
                         analysis = analyze_resume(client, resume_text, job_description)
                         if analysis:
-                            parsed_data = parse_analysis(analysis)
-                            if parsed_data:
-                                results.append(parsed_data)
+                            fields, parsed_data = parse_analysis(analysis)
+                            if parsed_data and fields:
+                                if columns is None:
+                                    columns = fields  # Set columns only once
+                                results_data.append(parsed_data)
                                 st.success(f"Successfully analyzed {uploaded_file.name}")
                             else:
                                 st.warning(f"Could not extract structured data for {uploaded_file.name}")
@@ -372,36 +375,11 @@ def main():
             # Complete the progress
             progress_bar.progress(1.0)
     
-    if results:
+    if results_data and columns:
         st.subheader("Analysis Results")
         
-        columns = [
-            # Basic attributes
-            "Candidate Name", 
-            "Total Experience (Years)", 
-            "Relevancy Score (0-100)", 
-            "Strong Matches Score",
-            "Strong Matches Reasoning", 
-            "Partial Matches Score",
-            "Partial Matches Reasoning",
-            "All Tech Skills",
-            "Relevant Tech Skills", 
-            "Degree", 
-            "College/University",
-            "Job Applying For",
-            "College Rating",
-            "Job Stability",
-            "Latest Company",
-            "Leadership Skills",
-            "International Team Experience",
-            "Notice Period",
-            
-            # Final Evaluation
-            "Overall Weighted Score",
-            "Selection Recommendation"
-        ]
-        
-        df = pd.DataFrame(results, columns=columns)
+        # Create DataFrame with the extracted data
+        df = pd.DataFrame(results_data, columns=columns)
         
         # Display a simplified version of the dataframe for the UI
         display_columns = [
@@ -410,6 +388,10 @@ def main():
             "Leadership Skills", "International Team Experience", "Notice Period",
             "Overall Weighted Score", "Selection Recommendation"
         ]
+        
+        # Filter to only show columns that exist in our dataframe
+        display_columns = [col for col in display_columns if col in df.columns]
+        
         st.dataframe(df[display_columns])
         
         # Prepare full results for download
@@ -442,3 +424,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
