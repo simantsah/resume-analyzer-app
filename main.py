@@ -5,9 +5,8 @@ import os
 import re
 import pandas as pd
 from dotenv import load_dotenv
-from datetime import datetime, date
+from datetime import datetime
 import tempfile
-import json
 import openpyxl
 from io import BytesIO
 
@@ -24,6 +23,14 @@ def extract_text_from_pdf(pdf_file):
     except Exception as e:
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
+
+# Define top competitors of Planful
+COMPETITORS = [
+    "Adaptive Insights", "Anaplan", "Workday", "Oracle", "SAP", 
+    "IBM", "Tableau", "Domo", "Qlik", "Microsoft", 
+    "Sisense", "TIBCO", "Board", "CCH Tagetik", "Prophix", 
+    "Host Analytics", "Jedox", "Planisware", "Vena Solutions", "CCH Axcess"
+]
 
 # Call AI model to analyze resume with enhanced evaluation attributes
 def analyze_resume(client, resume_text, job_description):
@@ -121,7 +128,7 @@ def parse_analysis(analysis):
             "College Rating": ["college rating", "university rating", "institution rating"],
             "Job Stability": ["job stability", "employment stability"],
             "Latest Company": ["latest company", "current company", "most recent company"],
-            "Leadership Skills": ["leadership skills", "leadership experience", "leadership"],
+            "Leadership Skills Reasoning": ["leadership skills", "leadership experience", "leadership"],
             "International Team Experience": ["international team experience", "global team experience", "international experience"],
             "Notice Period": ["notice period", "joining availability", "availability to join"],
             "Overall Weighted Score": ["overall weighted score", "overall score", "final score"],
@@ -188,20 +195,16 @@ def parse_analysis(analysis):
         # Ensure fields like Job Stability are numeric
         if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?$', result["Job Stability"]):
             # Try to extract a number from the text
-            matches = re.search(r'(\d+(?:\.\d+)?)/10', result["Job Stability"])
+            matches = re.search(r'(\d+(?:\.\d+)?)', result["Job Stability"])
             if matches:
                 result["Job Stability"] = matches.group(1)
-            else:
-                matches = re.search(r'(\d+(?:\.\d+)?)', result["Job Stability"])
-                if matches:
-                    result["Job Stability"] = matches.group(1)
         
         # Normalize College Rating
         if result["College Rating"] != "Not Available":
             if "premium" in result["College Rating"].lower():
-                result["College Rating"] = "Premium"
+                result["College Rating"] = "Premier Institute"
             elif "non" in result["College Rating"].lower() or "not" in result["College Rating"].lower():
-                result["College Rating"] = "Non-Premium"
+                result["College Rating"] = "Non-Premier Institute"
         
         # Normalize International Team Experience
         if result["International Team Experience"] != "Not Available":
@@ -212,12 +215,31 @@ def parse_analysis(analysis):
                 if len(result["International Team Experience"]) < 5:  # Just "No" or similar
                     result["International Team Experience"] = "No"
         
+        # Check if the candidate is from a competitor company
+        if result["Latest Company"] != "Not Available":
+            result["From Competitor"] = "Yes" if any(comp.lower() in result["Latest Company"].lower() for comp in COMPETITORS) else "No"
+        else:
+            result["From Competitor"] = "Not Available"
+        
+        # Determine Leadership Skills
+        if result["Leadership Skills Reasoning"] != "Not Available":
+            result["Leadership Skills"] = "Yes" if any(word in result["Leadership Skills Reasoning"].lower() for word in ["led", "managed", "supervised", "directed"]) else "No"
+        else:
+            result["Leadership Skills"] = "Not Available"
+        
+        # Normalize Selection Recommendation
+        if result["Selection Recommendation"] != "Not Available":
+            if "recommend" in result["Selection Recommendation"].lower():
+                result["Selection Recommendation"] = "Recommend"
+            else:
+                result["Selection Recommendation"] = "Not Recommend"
+        
         # Clean all values
         for field in result:
             result[field] = clean_text(result[field])
         
         # Convert to list in the expected order
-        ordered_fields = list(expected_fields.keys())
+        ordered_fields = list(expected_fields.keys()) + ["From Competitor", "Leadership Skills", "Selection Recommendation"]
         extracted_data = [result.get(field, "Not Available") for field in ordered_fields]
         
         # Debugging: Show the extracted data
@@ -297,9 +319,9 @@ def format_excel_workbook(wb, columns):
             
             # Special formatting for College Rating
             if column_name == "College Rating" and cell.value not in ["Not Available", None]:
-                if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
+                if "premier" in str(cell.value).lower() and "non" not in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                elif "non-premium" in str(cell.value).lower():
+                elif "non-premier" in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
             
             # Special formatting for Selection Recommendation
@@ -385,7 +407,7 @@ def main():
         display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Job Applying For", "College Rating", "Job Stability", "Latest Company",
-            "Leadership Skills", "International Team Experience", "Notice Period",
+            "From Competitor", "Leadership Skills", "International Team Experience", "Notice Period",
             "Overall Weighted Score", "Selection Recommendation"
         ]
         
@@ -424,4 +446,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
