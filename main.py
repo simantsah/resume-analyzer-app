@@ -15,7 +15,7 @@ try:
 except:
     pass
 
-# Google Sheets API Setup
+# Google Sheets API Setup using Streamlit Connection
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def extract_text_from_pdf(pdf_file):
@@ -81,17 +81,20 @@ def analyze_resume(client, resume_text, job_description):
         return None
 
 def update_google_sheets(candidate_name, total_experience, analysis, resume_hash):
-    existing_records = conn.read()
-    
-    # Check if resume already exists in the sheet (by hash)
-    if resume_hash in existing_records.values:
-        st.success("Data already exists in Google Sheets! ✅")
-        return
+    try:
+        existing_records = conn.read()
+        
+        # Check if resume already exists in the sheet (by hash)
+        if not existing_records.empty and resume_hash in existing_records.values:
+            st.success("Data already exists in Google Sheets! ✅")
+            return
 
-    # Append new entry
-    new_entry = [resume_hash, candidate_name, total_experience, analysis]
-    conn.write([new_entry], append=True)
-    st.success("Data successfully saved to Google Sheets! ✅")
+        # Append new entry
+        new_entry = [[resume_hash, candidate_name, total_experience, analysis]]
+        conn.update(worksheet="ResumeAnalysis", data=new_entry, append=True)
+        st.success("Data successfully saved to Google Sheets! ✅")
+    except Exception as e:
+        st.error(f"Error updating Google Sheets: {str(e)}")
 
 def main():
     st.title("📝 Resume Analyzer")
@@ -114,7 +117,7 @@ def main():
                 # Check if analysis already exists in Google Sheets
                 existing_records = conn.read()
                 cached_analysis = None
-                if resume_hash in existing_records.values:
+                if not existing_records.empty and resume_hash in existing_records.values:
                     cached_analysis = existing_records[existing_records[0] == resume_hash].values[0][3]
 
                 if cached_analysis:
