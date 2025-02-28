@@ -8,9 +8,11 @@ from dotenv import load_dotenv
 from datetime import datetime
 import tempfile
 
+# Initialize AI client
 def initialize_groq_client():
     return Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
+# Extract text from PDF
 def extract_text_from_pdf(pdf_file):
     try:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -20,6 +22,7 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
+# Call AI model to analyze resume
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
@@ -35,7 +38,7 @@ def analyze_resume(client, resume_text, job_description):
     - Tech Stack Experience
     - Degree
     - College/University
-    
+
     Resume:
     {resume_text}
     
@@ -55,7 +58,7 @@ def analyze_resume(client, resume_text, job_description):
         )
         ai_response = response.choices[0].message.content
         
-        # Debugging: Display AI response
+        # Debugging: Show AI response in Streamlit
         st.text_area("AI Response Output (Debugging)", ai_response, height=300)
         
         return ai_response
@@ -63,11 +66,12 @@ def analyze_resume(client, resume_text, job_description):
         st.error(f"Error during analysis: {str(e)}")
         return None
 
+# Parse the AI response using regex
 def parse_analysis(analysis):
     try:
         st.write("Debugging AI Output:", analysis)
         
-        # Updated regex pattern
+        # Updated regex pattern for flexible matching
         pattern = re.compile(
             r"Candidate Name:\s*(.*?)\n?"
             r"Total Experience.*?:\s*(\d+)?\s*years?\n?"
@@ -88,14 +92,15 @@ def parse_analysis(analysis):
             extracted_data = [match.group(i).strip() if match.group(i) else "Not Available" for i in range(1, 12)]
             return extracted_data
         
-        # Fallback: Handle unstructured AI output
-        st.warning("Regex failed. Using fallback parsing.")
+        # If regex fails, use fallback parsing
+        st.warning("Regex parsing failed. Attempting fallback extraction.")
         return fallback_parse_analysis(analysis)
     
     except Exception as e:
         st.error(f"Error parsing AI response: {str(e)}")
         return None
 
+# Fallback parsing: Extract key-value pairs manually
 def fallback_parse_analysis(analysis):
     """Fallback method for extracting data from AI response when regex fails."""
     try:
@@ -123,6 +128,7 @@ def fallback_parse_analysis(analysis):
         st.error(f"Error in fallback parsing: {str(e)}")
         return None
 
+# Main Streamlit App
 def main():
     st.title("📝 Resume Analyzer")
     st.write("Upload your resumes and paste the job description to get a structured analysis")
@@ -139,7 +145,8 @@ def main():
             resume_text = extract_text_from_pdf(uploaded_file)
             
             if resume_text:
-                if st.button(f"Analyze {uploaded_file.name}"):
+                analyze_button = st.button(f"Analyze {uploaded_file.name}")
+                if analyze_button:
                     with st.spinner(f"Analyzing {uploaded_file.name}..."):
                         analysis = analyze_resume(client, resume_text, job_description)
                         if analysis:
