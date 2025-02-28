@@ -5,7 +5,7 @@ import os
 import re
 import pandas as pd
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, date
 import tempfile
 import json
 import openpyxl
@@ -33,43 +33,39 @@ def analyze_resume(client, resume_text, job_description):
     
     PART 1: Basic Analysis
     - Candidate Name
-    - Total Experience (Years)
+    - Total Experience (Years): Calculate this from the earliest job date to either the latest job end date or current date if the candidate is currently employed. Format as a number.
     - Relevancy Score (0-100)
-    - Strong Matches Score
-    - Partial Matches Score
-    - Missing Skills Score
-    - Relevant Tech Skills
+    - Strong Matches Score: Score based on exact skill matches with the job description
+    - Strong Matches Reasoning: Explain why these skills are considered strong matches
+    - Partial Matches Score: Score based on related but not exact matches with the job description
+    - Partial Matches Reasoning: Explain why these skills are considered partial matches
+    - All Tech Skills: A comprehensive list of ALL technical skills mentioned in the resume
+    - Relevant Tech Skills: Only the technical skills that align with the job description
     - Tech Stack
-    - Tech Stack Experience
-    - Degree
+    - Degree: List the highest qualification only (e.g., Undergraduate, Graduate, PhD, etc.)
     - College/University
     
     PART 2: Detailed Evaluation Attributes (Score each on a scale of 1-10)
     
-    A. Core Competencies (30%)
+    A. Core Competencies
     1. Technical Skills Score (1-10): Evaluate alignment of technical skills with job requirements
     2. Industry Knowledge Score (1-10): Assess understanding of industry, tools, and methodologies
-    3. Certifications & Training Score (1-10): Evaluate relevance of certifications and advanced training
     
-    B. Work Experience & Responsibilities (25%)
-    1. Years of Experience Score (1-10): Compare required vs. actual experience
+    B. Work Experience & Responsibilities
+    1. Years of Experience Score (1-10): Score 10 if candidate's experience matches or exceeds JD requirements, score 5 if below requirements
     2. Job Role Alignment Score (1-10): Assess similarity between previous jobs and target position
-    3. Achievements & Impact Score (1-10): Evaluate presence of measurable achievements
     
-    C. Education & Academic Background (10%)
-    1. Degree & Institution Ranking Score (1-10): Evaluate degree relevance and institution quality
+    C. Education & Academic Background
+    1. Education Score (1-10): Evaluate if education meets job requirements
     
-    D. Soft Skills & Cultural Fit (15%)
+    D. Soft Skills & Cultural Fit
     1. Leadership & Teamwork Score (1-10): Assess leadership roles and team collaboration evidence
-    2. Communication & Interpersonal Skills Score (1-10): Evaluate communication and interpersonal skills
     
-    E. Extra Factors (20%)
+    E. Extra Factors
     1. Stability & Career Progression Score (1-10): Assess growth in roles/responsibilities over time
-    2. Certifications, Languages, & Extras Score (1-10): Evaluate additional value-adding qualifications
-    3. Culture & Company Fit Score (1-10): Assess alignment with company culture based on job description
     
     PART 3: Final Evaluation
-    - Overall Weighted Score (0-100): Calculate the weighted sum based on percentages above
+    - Overall Weighted Score (0-100): Calculate the weighted sum of the remaining attributes (without the removed ones)
     - Selection Recommendation: Recommend if score is ≥75% ("Recommend" or "Do Not Recommend")
     
     Format your response with labels exactly as shown above, followed by a colon and the value.
@@ -133,42 +129,38 @@ def parse_analysis(analysis):
         # Use a more reliable key-value extraction approach
         result = {}
         
-        # Define the keys we're looking for - now with the new evaluation attributes
+        # Define the keys we're looking for - updated with new requirements
         keys = [
             # Basic attributes
             "Candidate Name", 
             "Total Experience", "Total Experience (Years)",
             "Relevancy Score", "Relevancy Score (0-100)",
             "Strong Matches Score",
+            "Strong Matches Reasoning",
             "Partial Matches Score",
-            "Missing Skills Score",
+            "Partial Matches Reasoning",
+            "All Tech Skills",
             "Relevant Tech Skills",
             "Tech Stack",
-            "Tech Stack Experience",
             "Degree",
             "College/University",
             
             # Core Competencies
             "Technical Skills Score", 
             "Industry Knowledge Score",
-            "Certifications & Training Score",
             
             # Work Experience
             "Years of Experience Score",
             "Job Role Alignment Score",
-            "Achievements & Impact Score",
             
             # Education
-            "Degree & Institution Ranking Score",
+            "Education Score",
             
             # Soft Skills
             "Leadership & Teamwork Score",
-            "Communication & Interpersonal Skills Score",
             
             # Extra Factors
             "Stability & Career Progression Score",
-            "Certifications, Languages, & Extras Score",
-            "Culture & Company Fit Score",
             
             # Final Evaluation
             "Overall Weighted Score",
@@ -195,7 +187,7 @@ def parse_analysis(analysis):
                 # Find matching key from our list
                 matched_key = None
                 for k in keys:
-                    if key.lower() == k.lower() or k.lower() in key.lower():
+                    if key.lower() == k.lower() or key.lower().startswith(k.lower()):
                         matched_key = k
                         break
                 
@@ -232,36 +224,32 @@ def parse_analysis(analysis):
             "Candidate Name", 
             "Total Experience (Years)", 
             "Relevancy Score (0-100)", 
-            "Strong Matches Score", 
-            "Partial Matches Score", 
-            "Missing Skills Score", 
+            "Strong Matches Score",
+            "Strong Matches Reasoning", 
+            "Partial Matches Score",
+            "Partial Matches Reasoning",
+            "All Tech Skills",
             "Relevant Tech Skills", 
             "Tech Stack", 
-            "Tech Stack Experience", 
             "Degree", 
             "College/University",
             
             # Core Competencies
             "Technical Skills Score", 
             "Industry Knowledge Score",
-            "Certifications & Training Score",
             
             # Work Experience
             "Years of Experience Score",
             "Job Role Alignment Score",
-            "Achievements & Impact Score",
             
             # Education
-            "Degree & Institution Ranking Score",
+            "Education Score",
             
             # Soft Skills
             "Leadership & Teamwork Score",
-            "Communication & Interpersonal Skills Score",
             
             # Extra Factors
             "Stability & Career Progression Score",
-            "Certifications, Languages, & Extras Score",
-            "Culture & Company Fit Score",
             
             # Final Evaluation
             "Overall Weighted Score",
@@ -336,7 +324,7 @@ def format_excel_workbook(wb, columns):
             
             # Apply centered alignment to score columns
             column_name = columns[col-1]
-            if "Score" in column_name or "Recommendation" in column_name:
+            if "Score" in column_name and "Reasoning" not in column_name or "Recommendation" in column_name:
                 cell.alignment = score_alignment
                 
                 # Conditional formatting for scores
@@ -355,7 +343,7 @@ def format_excel_workbook(wb, columns):
     # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
-        if "Skills" in column or "Stack" in column or "Tech" in column:
+        if "Skills" in column or "Stack" in column or "Tech" in column or "Reasoning" in column:
             ws.column_dimensions[column_letter].width = 40
         elif "Recommendation" in column:
             ws.column_dimensions[column_letter].width = 20
@@ -419,32 +407,35 @@ def main():
         
         columns = [
             # Basic attributes
-            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
-            "Strong Matches Score", "Partial Matches Score", "Missing Skills Score", 
-            "Relevant Tech Skills", "Tech Stack", "Tech Stack Experience", "Degree", 
+            "Candidate Name", 
+            "Total Experience (Years)", 
+            "Relevancy Score (0-100)", 
+            "Strong Matches Score",
+            "Strong Matches Reasoning", 
+            "Partial Matches Score",
+            "Partial Matches Reasoning",
+            "All Tech Skills",
+            "Relevant Tech Skills", 
+            "Tech Stack", 
+            "Degree", 
             "College/University",
             
             # Core Competencies
             "Technical Skills Score", 
             "Industry Knowledge Score",
-            "Certifications & Training Score",
             
             # Work Experience
             "Years of Experience Score",
             "Job Role Alignment Score",
-            "Achievements & Impact Score",
             
             # Education
-            "Degree & Institution Ranking Score",
+            "Education Score",
             
             # Soft Skills
             "Leadership & Teamwork Score",
-            "Communication & Interpersonal Skills Score",
             
             # Extra Factors
             "Stability & Career Progression Score",
-            "Certifications, Languages, & Extras Score",
-            "Culture & Company Fit Score",
             
             # Final Evaluation
             "Overall Weighted Score",
@@ -455,8 +446,8 @@ def main():
         
         # Display a simplified version of the dataframe for the UI
         display_columns = [
-            "Candidate Name", "Relevancy Score (0-100)", "Overall Weighted Score", 
-            "Selection Recommendation", "Technical Skills Score", "Job Role Alignment Score"
+            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
+            "Overall Weighted Score", "Selection Recommendation", "Degree"
         ]
         st.dataframe(df[display_columns])
         
@@ -473,7 +464,7 @@ def main():
                 wb.save(tmpfile.name)
                 tmpfile_path = tmpfile.name
             
-            st.success("Excel file created successfully with enhanced evaluation metrics!")
+            st.success("Excel file created successfully with revised evaluation metrics!")
             
             # Offer the file for download
             with open(tmpfile_path, "rb") as file:
