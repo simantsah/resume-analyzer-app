@@ -25,7 +25,7 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Call AI model to analyze resume with enhanced evaluation attributes
+# Call AI model to analyze resume with all requested attributes
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
@@ -116,7 +116,7 @@ def parse_analysis(analysis):
         # Use a more reliable key-value extraction approach
         result = {}
         
-        # Define the keys we're looking for - updated with removed attributes
+        # Define the keys we're looking for
         keys = [
             # Basic attributes
             "Candidate Name", 
@@ -193,6 +193,19 @@ def parse_analysis(analysis):
             # Extract just the number if possible
             match = re.search(r'(\d+(?:\.\d+)?)', value)
             result["Relevancy Score (0-100)"] = match.group(1) if match else value
+        
+        # Ensure all required fields have at least a default value
+        for key in [
+            "Job Applying For", 
+            "College Rating", 
+            "Job Stability", 
+            "Latest Company", 
+            "Leadership Skills", 
+            "International Team Experience", 
+            "Notice Period"
+        ]:
+            if key not in result:
+                result[key] = "Not Available"
         
         # Prepare the output in the expected order
         expected_keys = [
@@ -289,11 +302,11 @@ def format_excel_workbook(wb, columns):
             
             # Apply centered alignment to score columns
             column_name = columns[col-1]
-            if "Score" in column_name and "Reasoning" not in column_name or "Recommendation" in column_name:
+            if "Score" in column_name and "Reasoning" not in column_name or "Recommendation" in column_name or "Job Stability" in column_name:
                 cell.alignment = score_alignment
                 
                 # Conditional formatting for scores
-                if "Score" in column_name and cell.value not in ["Not Available", None]:
+                if ("Score" in column_name or "Job Stability" in column_name) and cell.value not in ["Not Available", None]:
                     try:
                         score_value = float(cell.value)
                         if score_value >= 8:
@@ -304,13 +317,20 @@ def format_excel_workbook(wb, columns):
                             cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
                     except (ValueError, TypeError):
                         pass
+                
+                # Conditional formatting for College Rating
+                if column_name == "College Rating" and cell.value not in ["Not Available", None]:
+                    if "premium" in str(cell.value).lower():
+                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                    else:
+                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
     
     # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
-        if "Skills" in column or "Reasoning" in column:
+        if "Skills" in column or "Reasoning" in column or "Leadership Skills" in column or "International Team Experience" in column:
             ws.column_dimensions[column_letter].width = 40
-        elif "Recommendation" in column:
+        elif "Recommendation" in column or "Notice Period" in column:
             ws.column_dimensions[column_letter].width = 20
         else:
             ws.column_dimensions[column_letter].width = 18
@@ -401,7 +421,9 @@ def main():
         # Display a simplified version of the dataframe for the UI
         display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
-            "Overall Weighted Score", "Selection Recommendation", "Degree"
+            "Job Applying For", "College Rating", "Job Stability", "Latest Company",
+            "Leadership Skills", "International Team Experience", "Notice Period",
+            "Overall Weighted Score", "Selection Recommendation"
         ]
         st.dataframe(df[display_columns])
         
@@ -418,7 +440,7 @@ def main():
                 wb.save(tmpfile.name)
                 tmpfile_path = tmpfile.name
             
-            st.success("Excel file created successfully with revised evaluation metrics!")
+            st.success("Excel file created successfully with all requested evaluation metrics!")
             
             # Offer the file for download
             with open(tmpfile_path, "rb") as file:
@@ -435,3 +457,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
