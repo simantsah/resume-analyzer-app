@@ -39,6 +39,12 @@ def analyze_resume(client, resume_text, job_description):
     - Degree
     - College/University
 
+    Format your response with labels exactly as shown above, followed by a colon and the value.
+    For example:
+    Candidate Name: John Doe
+    Total Experience (Years): 5
+    ...and so on.
+
     Resume:
     {resume_text}
     
@@ -50,7 +56,7 @@ def analyze_resume(client, resume_text, job_description):
         response = client.chat.completions.create(
             model="deepseek-r1-distill-qwen-32b",
             messages=[
-                {"role": "system", "content": "You are an expert resume analyzer and career coach."},
+                {"role": "system", "content": "You are an expert resume analyzer and career coach. Provide analysis in a consistent format with clear labels."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
@@ -59,73 +65,86 @@ def analyze_resume(client, resume_text, job_description):
         ai_response = response.choices[0].message.content
         
         # Debugging: Show AI response in Streamlit
-        st.text_area("AI Response Output (Debugging)", ai_response, height=300)
+        with st.expander("AI Response Output (Debugging)"):
+            st.text_area("Raw AI Response", ai_response, height=300)
         
         return ai_response
     except Exception as e:
         st.error(f"Error during analysis: {str(e)}")
         return None
 
-# Parse AI response using flexible extraction
+# Parse AI response using flexible key-value extraction
 def parse_analysis(analysis):
     try:
-        st.write("Debugging AI Output:", analysis)
-
-        # More flexible regex pattern to match various response formats
-        pattern = re.compile(
-            r"Candidate Name:\s*(.*?)\n?"
-            r".*?Total Experience.*?:\s*(\d+)?\s*years?\n?"
-            r".*?Relevancy Score.*?:\s*(\d+)?\n?"
-            r".*?Strong Matches Score.*?:\s*(\d+)?\n?"
-            r".*?Partial Matches Score.*?:\s*(\d+)?\n?"
-            r".*?Missing Skills Score.*?:\s*(\d+)?\n?"
-            r".*?Relevant Tech Skills:\s*(.*?)\n?"
-            r".*?Tech Stack:\s*(.*?)\n?"
-            r".*?Tech Stack Experience:\s*(.*?)\n?"
-            r".*?Degree:\s*(.*?)\n?"
-            r".*?College/University:\s*(.*?)\n?",
-            re.DOTALL
-        )
+        # Use a more reliable key-value extraction approach
+        result = {}
         
-        match = pattern.search(analysis)
-        if match:
-            extracted_data = [match.group(i).strip() if match.group(i) else "Not Available" for i in range(1, 12)]
-            return extracted_data
+        # Define the keys we're looking for
+        keys = [
+            "Candidate Name", 
+            "Total Experience", "Total Experience (Years)",
+            "Relevancy Score", "Relevancy Score (0-100)",
+            "Strong Matches Score",
+            "Partial Matches Score",
+            "Missing Skills Score",
+            "Relevant Tech Skills",
+            "Tech Stack",
+            "Tech Stack Experience",
+            "Degree",
+            "College/University"
+        ]
         
-        # If regex fails, use fallback parsing
-        st.warning("Regex parsing failed. Attempting fallback extraction.")
-        return fallback_parse_analysis(analysis)
+        # Process the text line by line
+        lines = analysis.split('\n')
+        for line in lines:
+            if ':' in line:
+                # Split on first colon
+                parts = line.split(':', 1)
+                key = parts[0].strip()
+                value = parts[1].strip() if len(parts) > 1 else ""
+                
+                # Find matching key from our list
+                matched_key = None
+                for k in keys:
+                    if key.lower() == k.lower() or k.lower() in key.lower():
+                        matched_key = k
+                        break
+                
+                if matched_key:
+                    # Normalize keys to match our expected format
+                    if matched_key == "Total Experience" or matched_key == "Total Experience (Years)":
+                        result["Total Experience (Years)"] = value.split()[0] if value else "Not Available"  # Extract just the number
+                    elif matched_key == "Relevancy Score" or matched_key == "Relevancy Score (0-100)":
+                        result["Relevancy Score (0-100)"] = value.split()[0] if value else "Not Available"  # Extract just the number
+                    else:
+                        result[matched_key] = value
+        
+        # Prepare the output in the expected order
+        expected_keys = [
+            "Candidate Name", 
+            "Total Experience (Years)", 
+            "Relevancy Score (0-100)", 
+            "Strong Matches Score", 
+            "Partial Matches Score", 
+            "Missing Skills Score", 
+            "Relevant Tech Skills", 
+            "Tech Stack", 
+            "Tech Stack Experience", 
+            "Degree", 
+            "College/University"
+        ]
+        
+        extracted_data = [result.get(k, "Not Available") for k in expected_keys]
+        
+        # Debugging: Show the extracted data
+        with st.expander("Extracted Data (Debugging)"):
+            for k, v in zip(expected_keys, extracted_data):
+                st.write(f"{k}: {v}")
+        
+        return extracted_data
     
     except Exception as e:
         st.error(f"Error parsing AI response: {str(e)}")
-        return None
-
-# Fallback parsing: Extract key-value pairs manually
-def fallback_parse_analysis(analysis):
-    """Fallback method for extracting data from AI response when regex fails."""
-    try:
-        data = {}
-        for line in analysis.split("\n"):
-            if ":" in line:
-                key, value = line.split(":", 1)
-                data[key.strip()] = value.strip()
-
-        extracted_data = [
-            data.get("Candidate Name", "Not Available"),
-            data.get("Total Experience", "Not Available"),
-            data.get("Relevancy Score", "Not Available"),
-            data.get("Strong Matches Score", "Not Available"),
-            data.get("Partial Matches Score", "Not Available"),
-            data.get("Missing Skills Score", "Not Available"),
-            data.get("Relevant Tech Skills", "Not Available"),
-            data.get("Tech Stack", "Not Available"),
-            data.get("Tech Stack Experience", "Not Available"),
-            data.get("Degree", "Not Available"),
-            data.get("College/University", "Not Available"),
-        ]
-        return extracted_data
-    except Exception as e:
-        st.error(f"Error in fallback parsing: {str(e)}")
         return None
 
 # Main Streamlit App
@@ -133,6 +152,13 @@ def main():
     st.title("📝 Resume Analyzer")
     st.write("Upload your resumes and paste the job description to get a structured analysis")
 
+    # Load environment variables
+    load_dotenv()
+    
+    if not os.environ.get("GROQ_API_KEY"):
+        st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
+        return
+        
     client = initialize_groq_client()
     uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
     job_description = st.text_area("Paste the job description here", height=200)
@@ -140,28 +166,36 @@ def main():
     results = []
     
     if uploaded_files and job_description:
-        for uploaded_file in uploaded_files:
-            st.subheader(f"Resume: {uploaded_file.name}")
-            resume_text = extract_text_from_pdf(uploaded_file)
-            
-            if resume_text:
-                analyze_button = st.button(f"Analyze {uploaded_file.name}")
-                if analyze_button:
-                    with st.spinner(f"Analyzing {uploaded_file.name}..."):
+        # Add a button to analyze all resumes at once
+        if st.button("Analyze All Resumes"):
+            for uploaded_file in uploaded_files:
+                st.subheader(f"Resume: {uploaded_file.name}")
+                with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                    resume_text = extract_text_from_pdf(uploaded_file)
+                    
+                    if resume_text:
                         analysis = analyze_resume(client, resume_text, job_description)
                         if analysis:
                             parsed_data = parse_analysis(analysis)
                             if parsed_data:
                                 results.append(parsed_data)
+                                st.success(f"Successfully analyzed {uploaded_file.name}")
                             else:
                                 st.warning(f"Could not extract structured data for {uploaded_file.name}")
+                    else:
+                        st.error(f"Could not extract text from {uploaded_file.name}")
     
     if results:
+        st.subheader("Analysis Results")
+        
         df = pd.DataFrame(results, columns=[
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Strong Matches Score", "Partial Matches Score", "Missing Skills Score", 
             "Relevant Tech Skills", "Tech Stack", "Tech Stack Experience", "Degree", 
             "College/University"])
+        
+        # Display the dataframe
+        st.dataframe(df)
 
         # Create a temporary file for download
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
@@ -175,7 +209,7 @@ def main():
             st.download_button(
                 label="📥 Download Excel Report",
                 data=file,
-                file_name="resume_analysis.xlsx",
+                file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
