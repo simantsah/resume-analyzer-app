@@ -34,12 +34,12 @@ def get_planful_competitors():
         "CCH Tagetik", "Infor CPM", "Syntellis", "Longview"
     ]
 
-# Extract LinkedIn URL directly from resume text
+# Extract LinkedIn URL directly from resume text - IMPROVED VERSION
 def extract_linkedin_url(text):
     if not text:
         return ""
     
-    # Pattern for LinkedIn URLs - supports various formats
+    # First check for common LinkedIn URL patterns
     patterns = [
         r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*',  # Standard format
         r'linkedin\.com/in/[\w-]+(?:/[\w-]+)*',                     # Without http(s)
@@ -61,6 +61,34 @@ def extract_linkedin_url(text):
             # Clean any trailing punctuation or spaces
             url = re.sub(r'[.,;:)\s]+$', '', url)
             
+            return url
+    
+    # If standard patterns fail, look for cases where "LinkedIn" is mentioned with a URL nearby
+    linkedin_mention = re.search(r'linkedin[\s:]*([^\s]+)', text, re.IGNORECASE)
+    if linkedin_mention:
+        potential_url = linkedin_mention.group(1)
+        # If it looks like a URL, return it properly formatted
+        if '.' in potential_url and '/' in potential_url:
+            # Clean up the URL
+            url = re.sub(r'[.,;:)\s]+$', '', potential_url)
+            if not url.startswith('http'):
+                url = 'https://' + ('' if url.startswith('www.') else 'www.') + url
+            return url
+    
+    # Look for any URL that might appear near the word "LinkedIn"
+    linkedin_context = re.search(r'linkedin.*?(https?://[^\s]+)', text, re.IGNORECASE)
+    if linkedin_context:
+        url = linkedin_context.group(1)
+        url = re.sub(r'[.,;:)\s]+$', '', url)
+        return url
+    
+    # Last resort: check if there's any mention of LinkedIn plus a URL within close proximity
+    lines_with_linkedin = [line for line in text.split('\n') if 'linkedin' in line.lower()]
+    for line in lines_with_linkedin:
+        url_match = re.search(r'https?://[^\s]+', line)
+        if url_match:
+            url = url_match.group(0)
+            url = re.sub(r'[.,;:)\s]+$', '', url)
             return url
     
     return ""
@@ -278,6 +306,7 @@ def parse_analysis(analysis, resume_text=None):
         if resume_text:
             # First check if we already have a valid LinkedIn URL
             if result["LinkedIn URL"] != "Not Available":
+                # If the value contains a valid URL, extract it
                 linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
                 if linkedin_match:
                     result["LinkedIn URL"] = linkedin_match.group(0)
@@ -290,7 +319,7 @@ def parse_analysis(analysis, resume_text=None):
                         # If not found in the field, try from the resume text
                         result["LinkedIn URL"] = extract_linkedin_url(resume_text)
             else:
-                # If no LinkedIn URL was identified, search the resume text directly
+                # If no LinkedIn URL was identified by the AI, search the resume text directly
                 result["LinkedIn URL"] = extract_linkedin_url(resume_text)
         else:
             # Fallback to original approach if resume text not available
@@ -299,7 +328,10 @@ def parse_analysis(analysis, resume_text=None):
                 if linkedin_match:
                     result["LinkedIn URL"] = linkedin_match.group(0)
                 else:
-                    result["LinkedIn URL"] = ""
+                    linked_in_text = result["LinkedIn URL"].lower()
+                    # If it says "not mentioned" or similar, set to empty string
+                    if any(phrase in linked_in_text for phrase in ["not available", "not mentioned", "not found", "no linkedin"]):
+                        result["LinkedIn URL"] = ""
             else:
                 result["LinkedIn URL"] = ""
         
