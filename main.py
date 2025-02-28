@@ -33,9 +33,7 @@ def analyze_resume(client, resume_text, job_description):
     
     PART 1: Basic Analysis
     - Candidate Name
-    - Job Applied For: Extract the job title and Job ID from the job description (look specifically for "Job ID" or a similar identifier)
     - Total Experience (Years): Calculate this from the earliest job date to either the latest job end date or current date if the candidate is currently employed. Format as a number.
-    - Current/Latest Company: Identify the candidate's current or most recent employer
     - Relevancy Score (0-100)
     - Strong Matches Score: Score based on exact skill matches with the job description
     - Strong Matches Reasoning: Explain why these skills are considered strong matches
@@ -45,22 +43,21 @@ def analyze_resume(client, resume_text, job_description):
     - Relevant Tech Skills: Only the technical skills that align with the job description
     - Degree: List the highest qualification only (e.g., Undergraduate, Graduate, PhD, etc.)
     - College/University
-    - College Tier: Rate the institution as "Premium" or "Non-Premium" based on the reputation of the institution
+    - Job Applying For: Extract the Job ID from the job description. Look for the word "Job ID" or "Job ID".
+    - College Rating: Rate the college as Premium or Non-Premium.
+    - Job Stability: Rate the stability of the candidate's job history on a scale of ten. If the person has spent at least 2 years in each job, give a full 10. Otherwise, rate based on how frequently they switch jobs.
+    - Latest Company: Identify the latest company the candidate is working for.
+    - Leadership Skills: Check for leadership skills and provide a rating or description.
+    - International Team Experience: Check if the candidate has worked with teams outside India. Look for mentions of people from different countries they have worked with.
+    - Notice Period: Check if the candidate has mentioned a notice period or is an immediate joiner.
     
-    PART 2: Additional Attributes
-    - Job Stability Score (0-10): Rate the candidate's job stability. Give 10 if they stayed at least 2 years in each position. Lower the score based on frequent job changes.
-    - Leadership Skills (0-10): Evaluate the candidate's leadership experience and skills based on their resume. Look for management positions, team lead roles, or leadership-related activities.
-    - Global Experience (Yes/No): Determine if the candidate has worked with teams outside India. Look for mentions of international collaboration, global teams, or specific countries.
-    - Joining Availability: Identify if the candidate is an immediate joiner or has mentioned a notice period. If specific period is mentioned, note it.
-    
-    PART 3: Final Evaluation
+    PART 2: Final Evaluation
     - Overall Weighted Score (0-100): Calculate a weighted score based on the candidate's overall fit for the position
     - Selection Recommendation: Recommend if score is ≥75% ("Recommend" or "Do Not Recommend")
     
     Format your response with labels exactly as shown above, followed by a colon and the value.
     For example:
     Candidate Name: John Doe
-    Job Applied For: Senior Software Engineer (Job ID: ABC123)
     Total Experience (Years): 5
     ...and so on.
     
@@ -119,13 +116,11 @@ def parse_analysis(analysis):
         # Use a more reliable key-value extraction approach
         result = {}
         
-        # Define the keys we're looking for - updated with new attributes
+        # Define the keys we're looking for - updated with removed attributes
         keys = [
             # Basic attributes
-            "Candidate Name",
-            "Job Applied For",
+            "Candidate Name", 
             "Total Experience", "Total Experience (Years)",
-            "Current/Latest Company",
             "Relevancy Score", "Relevancy Score (0-100)",
             "Strong Matches Score",
             "Strong Matches Reasoning",
@@ -135,13 +130,13 @@ def parse_analysis(analysis):
             "Relevant Tech Skills",
             "Degree",
             "College/University",
-            "College Tier",
-            
-            # Additional attributes
-            "Job Stability Score",
+            "Job Applying For",
+            "College Rating",
+            "Job Stability",
+            "Latest Company",
             "Leadership Skills",
-            "Global Experience",
-            "Joining Availability",
+            "International Team Experience",
+            "Notice Period",
             
             # Final Evaluation
             "Overall Weighted Score",
@@ -202,26 +197,24 @@ def parse_analysis(analysis):
         # Prepare the output in the expected order
         expected_keys = [
             # Basic attributes
-            "Candidate Name",
-            "Job Applied For",
-            "Total Experience (Years)",
-            "Current/Latest Company",
-            "Relevancy Score (0-100)",
+            "Candidate Name", 
+            "Total Experience (Years)", 
+            "Relevancy Score (0-100)", 
             "Strong Matches Score",
-            "Strong Matches Reasoning",
+            "Strong Matches Reasoning", 
             "Partial Matches Score",
             "Partial Matches Reasoning",
             "All Tech Skills",
-            "Relevant Tech Skills",
-            "Degree",
+            "Relevant Tech Skills", 
+            "Degree", 
             "College/University",
-            "College Tier",
-            
-            # Additional attributes
-            "Job Stability Score",
+            "Job Applying For",
+            "College Rating",
+            "Job Stability",
+            "Latest Company",
             "Leadership Skills",
-            "Global Experience",
-            "Joining Availability",
+            "International Team Experience",
+            "Notice Period",
             
             # Final Evaluation
             "Overall Weighted Score",
@@ -296,11 +289,11 @@ def format_excel_workbook(wb, columns):
             
             # Apply centered alignment to score columns
             column_name = columns[col-1]
-            if ("Score" in column_name and "Reasoning" not in column_name) or "Recommendation" in column_name or column_name in ["Global Experience", "College Tier"]:
+            if "Score" in column_name and "Reasoning" not in column_name or "Recommendation" in column_name:
                 cell.alignment = score_alignment
                 
                 # Conditional formatting for scores
-                if ("Score" in column_name or column_name == "Leadership Skills") and cell.value not in ["Not Available", None]:
+                if "Score" in column_name and cell.value not in ["Not Available", None]:
                     try:
                         score_value = float(cell.value)
                         if score_value >= 8:
@@ -311,30 +304,12 @@ def format_excel_workbook(wb, columns):
                             cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
                     except (ValueError, TypeError):
                         pass
-                
-                # Conditional formatting for College Tier
-                if column_name == "College Tier" and cell.value not in ["Not Available", None]:
-                    if "premium" in str(cell.value).lower():
-                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                    else:
-                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                
-                # Conditional formatting for Global Experience
-                if column_name == "Global Experience" and cell.value not in ["Not Available", None]:
-                    if "yes" in str(cell.value).lower():
-                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                    else:
-                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
     
     # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
         if "Skills" in column or "Reasoning" in column:
             ws.column_dimensions[column_letter].width = 40
-        elif column in ["Job Applied For", "Joining Availability"]:
-            ws.column_dimensions[column_letter].width = 25
-        elif column in ["Current/Latest Company"]:
-            ws.column_dimensions[column_letter].width = 22
         elif "Recommendation" in column:
             ws.column_dimensions[column_letter].width = 20
         else:
@@ -397,26 +372,24 @@ def main():
         
         columns = [
             # Basic attributes
-            "Candidate Name",
-            "Job Applied For",
-            "Total Experience (Years)",
-            "Current/Latest Company",
-            "Relevancy Score (0-100)",
+            "Candidate Name", 
+            "Total Experience (Years)", 
+            "Relevancy Score (0-100)", 
             "Strong Matches Score",
-            "Strong Matches Reasoning",
+            "Strong Matches Reasoning", 
             "Partial Matches Score",
             "Partial Matches Reasoning",
             "All Tech Skills",
-            "Relevant Tech Skills",
-            "Degree",
+            "Relevant Tech Skills", 
+            "Degree", 
             "College/University",
-            "College Tier",
-            
-            # Additional attributes
-            "Job Stability Score",
+            "Job Applying For",
+            "College Rating",
+            "Job Stability",
+            "Latest Company",
             "Leadership Skills",
-            "Global Experience",
-            "Joining Availability",
+            "International Team Experience",
+            "Notice Period",
             
             # Final Evaluation
             "Overall Weighted Score",
@@ -427,10 +400,8 @@ def main():
         
         # Display a simplified version of the dataframe for the UI
         display_columns = [
-            "Candidate Name", "Job Applied For", "Current/Latest Company", 
-            "Total Experience (Years)", "College Tier", "Job Stability Score",
-            "Leadership Skills", "Global Experience", "Joining Availability",
-            "Overall Weighted Score", "Selection Recommendation"
+            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
+            "Overall Weighted Score", "Selection Recommendation", "Degree"
         ]
         st.dataframe(df[display_columns])
         
@@ -447,7 +418,7 @@ def main():
                 wb.save(tmpfile.name)
                 tmpfile_path = tmpfile.name
             
-            st.success("Excel file created successfully with enhanced evaluation metrics!")
+            st.success("Excel file created successfully with revised evaluation metrics!")
             
             # Offer the file for download
             with open(tmpfile_path, "rb") as file:
