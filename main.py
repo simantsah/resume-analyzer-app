@@ -236,25 +236,8 @@ def main():
 
         # Create a temporary file for download
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
-            # Create Excel writer with pandas
-            with pd.ExcelWriter(tmpfile.name, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Resume Analysis')
-                
-                # Get the xlsxwriter workbook and worksheet objects
-                workbook = writer.book
-                worksheet = writer.sheets['Resume Analysis']
-                
-                # Add a format for wrapping text
-                wrap_format = workbook.add_format({'text_wrap': True})
-                
-                # Set column widths and text wrapping
-                for i, col in enumerate(df.columns):
-                    # Set column width based on content type
-                    if col in ["Relevant Tech Skills", "Tech Stack", "Tech Stack Experience"]:
-                        worksheet.set_column(i, i, 30, wrap_format)
-                    else:
-                        worksheet.set_column(i, i, 20, wrap_format)
-
+            # Using the standard pandas to_excel method without xlsxwriter
+            df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis')
             tmpfile_path = tmpfile.name
 
         st.success("Excel file created successfully!")
