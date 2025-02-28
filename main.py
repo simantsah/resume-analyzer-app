@@ -11,7 +11,6 @@ import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime
 import re
-import openpyxl
 
 try:
     load_dotenv()
