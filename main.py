@@ -67,6 +67,15 @@ def extract_experience(text):
             return max(years) - min(years)
     return "Could not determine"
 
+def extract_college_and_degree(text):
+    college_match = re.search(r'(?i)(?:university|college|institute of technology|school of engineering)[:\s]*([A-Za-z &.,-]{5,})', text)
+    degree_match = re.search(r'(?i)\b(Bachelor|Master|PhD|Associate|Diploma)\b', text)
+    
+    college = college_match.group(1).strip() if college_match else "College not found"
+    degree = degree_match.group(1) if degree_match else "Degree not found"
+    
+    return degree, college
+
 def analyze_resume(client, resume_text, job_description):
     prompt = f"""
     As an expert resume analyzer, review the following resume against the job description.
@@ -80,6 +89,8 @@ def analyze_resume(client, resume_text, job_description):
     7. Relevant Tech Skills (Compare the JD and the resume to find out the tech stack and relevancy)
     8. Tech Stack (List all tech stack known to the candidate)
     9. Tech Stack Experience (For each tech stack, rate the candidate as No Experience, Beginner, Intermediate, Advanced, or Expert)
+    10. Is the candidate a graduate or undergraduate?
+    11. College/University attended.
     
     Resume:
     {resume_text}
@@ -87,7 +98,7 @@ def analyze_resume(client, resume_text, job_description):
     Job Description:
     {job_description}
     
-    Provide the analysis in a clear, structured format.
+    Provide the analysis in a clear, structured format with numeric scores for the relevant points.
     """
     
     try:
@@ -121,10 +132,13 @@ def main():
             if resume_text:
                 candidate_name = extract_name(resume_text)
                 total_experience = extract_experience(resume_text)
+                degree, college = extract_college_and_degree(resume_text)
                 
                 st.text_area("Extracted Text", resume_text, height=200, key=uploaded_file.name)
                 st.write(f"**Candidate Name:** {candidate_name}")
                 st.write(f"**Total Experience:** {total_experience} years")
+                st.write(f"**Degree:** {degree}")
+                st.write(f"**College/University:** {college}")
                 
                 if st.button(f"Analyze {uploaded_file.name}"):
                     with st.spinner(f"Analyzing {uploaded_file.name}..."):
