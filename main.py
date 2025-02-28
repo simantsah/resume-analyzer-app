@@ -8,15 +8,7 @@ from dotenv import load_dotenv
 import re
 import hashlib
 from datetime import datetime
-
-# Ensure gspread is installed before running the script
-try:
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
-except ModuleNotFoundError:
-    os.system("pip install gspread oauth2client")
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
+from streamlit_gsheets import GSheetsConnection
 
 try:
     load_dotenv()
@@ -24,24 +16,7 @@ except:
     pass
 
 # Google Sheets API Setup
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1ptmDeXbe6MzapC0cPQIrKBF3XoNkvk9JnZ5nMpG1GY0/edit?gid=0#gid=0"
-CREDENTIALS_FILE = "credentials.json"  # Place your Google Sheets credentials JSON file in the working directory
-
-def connect_to_gsheets():
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
-        client = gspread.authorize(creds)
-        return client
-    except Exception as e:
-        st.error(f"Error connecting to Google Sheets: {str(e)}")
-        return None
-
-def get_gsheet():
-    client = connect_to_gsheets()
-    if client:
-        return client.open_by_url(SHEET_URL).sheet1  # Select the first sheet
-    return None
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 def extract_text_from_pdf(pdf_file):
     try:
@@ -106,21 +81,16 @@ def analyze_resume(client, resume_text, job_description):
         return None
 
 def update_google_sheets(candidate_name, total_experience, analysis, resume_hash):
-    sheet = get_gsheet()
-    if sheet is None:
-        st.error("Could not connect to Google Sheets.")
+    existing_records = conn.read()
+    
+    # Check if resume already exists in the sheet (by hash)
+    if resume_hash in existing_records.values:
+        st.success("Data already exists in Google Sheets! ✅")
         return
 
-    existing_records = sheet.get_all_values()
-
-    # Check if resume already exists in the sheet (by hash)
-    for row in existing_records:
-        if len(row) > 0 and row[0] == resume_hash:
-            st.success("Data already exists in Google Sheets! ✅")
-            return
-
     # Append new entry
-    sheet.append_row([resume_hash, candidate_name, total_experience, analysis])
+    new_entry = [resume_hash, candidate_name, total_experience, analysis]
+    conn.write([new_entry], append=True)
     st.success("Data successfully saved to Google Sheets! ✅")
 
 def main():
@@ -142,14 +112,10 @@ def main():
                 resume_hash = generate_resume_hash(resume_text)
 
                 # Check if analysis already exists in Google Sheets
-                sheet = get_gsheet()
+                existing_records = conn.read()
                 cached_analysis = None
-                if sheet:
-                    existing_records = sheet.get_all_values()
-                    for row in existing_records:
-                        if len(row) > 0 and row[0] == resume_hash:
-                            cached_analysis = row[3]
-                            break
+                if resume_hash in existing_records.values:
+                    cached_analysis = existing_records[existing_records[0] == resume_hash].values[0][3]
 
                 if cached_analysis:
                     analysis = cached_analysis
