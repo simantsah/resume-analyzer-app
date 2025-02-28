@@ -49,6 +49,8 @@ def analyze_resume(client, resume_text, job_description):
     Leadership Skills: [Describe leadership experience]
     International Team Experience: [Yes/No + details about working with teams outside India]
     Notice Period: [Extract notice period info or "Immediate Joiner"]
+    LinkedIn URL: [Extract LinkedIn profile URL if present, otherwise "Not Available"]
+    Portfolio URL: [Extract any portfolio, GitHub, or personal website URL if present, otherwise "Not Available"]
     Overall Weighted Score: [Calculate final score 0-100]
     Selection Recommendation: [Recommend or Do Not Recommend]
     
@@ -124,6 +126,8 @@ def parse_analysis(analysis):
             "Leadership Skills": ["leadership skills", "leadership experience", "leadership"],
             "International Team Experience": ["international team experience", "global team experience", "international experience"],
             "Notice Period": ["notice period", "joining availability", "availability to join"],
+            "LinkedIn URL": ["linkedin url", "linkedin profile", "linkedin", "linkedin link"],
+            "Portfolio URL": ["portfolio url", "portfolio", "github url", "github", "personal website", "personal url", "website"],
             "Overall Weighted Score": ["overall weighted score", "overall score", "final score"],
             "Selection Recommendation": ["selection recommendation", "hiring recommendation", "recommendation"]
         }
@@ -212,6 +216,24 @@ def parse_analysis(analysis):
                 if len(result["International Team Experience"]) < 5:  # Just "No" or similar
                     result["International Team Experience"] = "No"
         
+        # Extract URLs more reliably
+        # For LinkedIn URL
+        if result["LinkedIn URL"] != "Not Available":
+            linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/\S+', result["LinkedIn URL"])
+            if linkedin_match:
+                result["LinkedIn URL"] = linkedin_match.group(0)
+            elif "not available" in result["LinkedIn URL"].lower() or "not found" in result["LinkedIn URL"].lower() or "not mentioned" in result["LinkedIn URL"].lower():
+                result["LinkedIn URL"] = "Not Available"
+        
+        # For Portfolio URL
+        if result["Portfolio URL"] != "Not Available":
+            # Look for common portfolio URLs
+            portfolio_match = re.search(r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|behance\.net|dribbble\.com|[\w-]+\.(?:com|io|org|net))/\S+', result["Portfolio URL"])
+            if portfolio_match:
+                result["Portfolio URL"] = portfolio_match.group(0)
+            elif "not available" in result["Portfolio URL"].lower() or "not found" in result["Portfolio URL"].lower() or "not mentioned" in result["Portfolio URL"].lower():
+                result["Portfolio URL"] = "Not Available"
+        
         # Clean all values
         for field in result:
             result[field] = clean_text(result[field])
@@ -251,6 +273,9 @@ def format_excel_workbook(wb, columns):
     
     # Score cell style
     score_alignment = Alignment(horizontal='center', vertical='center')
+    
+    # URL cell style
+    url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
     
     # Border style
     thin_border = Border(
@@ -309,14 +334,19 @@ def format_excel_workbook(wb, columns):
                         cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
                 else:
                     cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+            
+            # URL formatting for LinkedIn and Portfolio
+            if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
+                cell.font = url_font
+                cell.hyperlink = cell.value
     
     # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
         if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience"]):
             ws.column_dimensions[column_letter].width = 40
-        elif any(term in column for term in ["Recommendation", "Notice", "Company", "College"]):
-            ws.column_dimensions[column_letter].width = 25
+        elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
+            ws.column_dimensions[column_letter].width = 30
         else:
             ws.column_dimensions[column_letter].width = 18
     
@@ -395,6 +425,8 @@ def main():
             "Leadership Skills",
             "International Team Experience",
             "Notice Period",
+            "LinkedIn URL",
+            "Portfolio URL",
             
             # Final Evaluation
             "Overall Weighted Score",
@@ -407,7 +439,7 @@ def main():
         display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Job Applying For", "College Rating", "Job Stability", "Latest Company",
-            "Leadership Skills", "International Team Experience", "Notice Period",
+            "Leadership Skills", "LinkedIn URL", "Portfolio URL",
             "Overall Weighted Score", "Selection Recommendation"
         ]
         st.dataframe(df[display_columns])
