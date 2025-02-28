@@ -6,10 +6,17 @@ import time
 import logging
 from dotenv import load_dotenv
 import re
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-from datetime import datetime
 import hashlib
+from datetime import datetime
+
+# Auto-install gspread if missing
+try:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+except ModuleNotFoundError:
+    os.system("pip install gspread oauth2client")
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
 
 try:
     load_dotenv()
@@ -18,18 +25,26 @@ except:
 
 # Google Sheets API Setup
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1ptmDeXbe6MzapC0cPQIrKBF3XoNkvk9JnZ5nMpG1GY0/edit?gid=0#gid=0"
-CREDENTIALS_FILE = "credentials.json"  # Place your Google Sheets credentials JSON file in the working directory
+CREDENTIALS_FILE = "credentials.json"  # Ensure this file exists in your working directory
 
 def connect_to_gsheets():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
-    client = gspread.authorize(creds)
-    return client
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        st.error(f"Error connecting to Google Sheets: {str(e)}")
+        return None
 
 def get_gsheet():
     client = connect_to_gsheets()
-    sheet = client.open_by_url(SHEET_URL).sheet1  # Select the first sheet
-    return sheet
+    if client:
+        try:
+            return client.open_by_url(SHEET_URL).sheet1
+        except Exception as e:
+            st.error(f"Error opening Google Sheet: {str(e)}")
+    return None
 
 def extract_text_from_pdf(pdf_file):
     try:
@@ -95,17 +110,18 @@ def analyze_resume(client, resume_text, job_description):
 
 def update_google_sheets(candidate_name, total_experience, analysis, resume_hash):
     sheet = get_gsheet()
-    existing_records = sheet.get_all_values()
+    if sheet:
+        existing_records = sheet.get_all_values()
 
-    # Check if resume already exists in the sheet (by hash)
-    for row in existing_records:
-        if len(row) > 0 and row[0] == resume_hash:
-            st.success("Data already exists in Google Sheets! ✅")
-            return
+        # Check if resume already exists in the sheet (by hash)
+        for row in existing_records:
+            if len(row) > 0 and row[0] == resume_hash:
+                st.success("Data already exists in Google Sheets! ✅")
+                return
 
-    # Append new entry
-    sheet.append_row([resume_hash, candidate_name, total_experience, analysis])
-    st.success("Data successfully saved to Google Sheets! ✅")
+        # Append new entry
+        sheet.append_row([resume_hash, candidate_name, total_experience, analysis])
+        st.success("Data successfully saved to Google Sheets! ✅")
 
 def main():
     st.title("📝 Resume Analyzer")
@@ -127,7 +143,7 @@ def main():
 
                 # Check if analysis already exists in Google Sheets
                 sheet = get_gsheet()
-                existing_records = sheet.get_all_values()
+                existing_records = sheet.get_all_values() if sheet else []
                 cached_analysis = None
                 for row in existing_records:
                     if len(row) > 0 and row[0] == resume_hash:
