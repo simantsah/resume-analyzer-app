@@ -49,12 +49,19 @@ def analyze_resume(client, resume_text, job_description):
     
     A. Core Competencies
     1. Technical Skills Score (1-10): Evaluate alignment of technical skills with job requirements
+    2. Industry Knowledge Score (1-10): Assess understanding of industry, tools, and methodologies
     
     B. Work Experience & Responsibilities
+    1. Years of Experience Score (1-10): Score 10 if candidate's experience matches or exceeds JD requirements, score 5 if below requirements
+    2. Job Role Alignment Score (1-10): Assess similarity between previous jobs and target position
     
     C. Education & Academic Background
+    1. Education Score (1-10): Evaluate if education meets job requirements
     
-    D. Extra Factors
+    D. Soft Skills & Cultural Fit
+    1. Leadership & Teamwork Score (1-10): Assess leadership roles and team collaboration evidence
+    
+    E. Extra Factors
     1. Stability & Career Progression Score (1-10): Assess growth in roles/responsibilities over time
     
     PART 3: Final Evaluation
@@ -140,6 +147,17 @@ def parse_analysis(analysis):
             
             # Core Competencies
             "Technical Skills Score", 
+            "Industry Knowledge Score",
+            
+            # Work Experience
+            "Years of Experience Score",
+            "Job Role Alignment Score",
+            
+            # Education
+            "Education Score",
+            
+            # Soft Skills
+            "Leadership & Teamwork Score",
             
             # Extra Factors
             "Stability & Career Progression Score",
@@ -218,6 +236,17 @@ def parse_analysis(analysis):
             
             # Core Competencies
             "Technical Skills Score", 
+            "Industry Knowledge Score",
+            
+            # Work Experience
+            "Years of Experience Score",
+            "Job Role Alignment Score",
+            
+            # Education
+            "Education Score",
+            
+            # Soft Skills
+            "Leadership & Teamwork Score",
             
             # Extra Factors
             "Stability & Career Progression Score",
@@ -393,6 +422,17 @@ def main():
             
             # Core Competencies
             "Technical Skills Score", 
+            "Industry Knowledge Score",
+            
+            # Work Experience
+            "Years of Experience Score",
+            "Job Role Alignment Score",
+            
+            # Education
+            "Education Score",
+            
+            # Soft Skills
+            "Leadership & Teamwork Score",
             
             # Extra Factors
             "Stability & Career Progression Score",
