@@ -421,7 +421,10 @@ def main():
         st.write("Filtered Display Columns:", display_columns)
         
         if display_columns:  # Check if there are any columns to display
-            st.dataframe(df[display_columns])
+            try:
+                st.dataframe(df[display_columns])
+            except Exception as e:
+                st.error(f"Error displaying DataFrame: {str(e)}")
         else:
             st.warning("No columns to display.")
         
