@@ -58,7 +58,7 @@ def extract_text_fallback(image_file):
         
         # Since we can't extract text without OCR, provide a manual input option
         st.warning("Automated text extraction is unavailable. Please enter the text from the document manually.")
-        manual_text = st.text_area("Enter document text manually:", height=150)
+        manual_text = st.text_area("Enter document text manually:", height=150, key="fallback_manual_text")
         
         if manual_text:
             return manual_text
@@ -168,7 +168,7 @@ def analyze_document(client, document_text, document_type):
         
         # Debugging: Show AI response in Streamlit
         with st.expander("Raw AI Response Output (Debugging)"):
-            st.text_area("Raw AI Response", ai_response, height=200)
+            st.text_area("Raw AI Response", ai_response, height=200, key="raw_ai_response")
         
         return ai_response
     except Exception as e:
@@ -259,7 +259,7 @@ def main():
         st.info("You can get a Groq API key at https://console.groq.com/")
         
         # Provide option for manual key entry
-        manual_key = st.text_input("Enter your Groq API key:", type="password")
+        manual_key = st.text_input("Enter your Groq API key:", type="password", key="manual_groq_key")
         if manual_key:
             os.environ["GROQ_API_KEY"] = manual_key
             st.success("API key set for this session!")
@@ -297,7 +297,7 @@ def main():
                 if document_text:
                     # Show extracted raw text
                     with st.expander("Show Extracted Raw Text"):
-                        st.text_area("Extracted Text", document_text, height=200)
+                        st.text_area("Extracted Text", document_text, height=200, key="tab1_extracted_text")
                     
                     # Detect document type
                     document_type = detect_document_type(groq_client, document_text)
@@ -326,9 +326,9 @@ def main():
                     
                     # Offer manual text input as fallback
                     st.info("As a fallback, you can manually enter the text from your document.")
-                    manual_text = st.text_area("Enter document text manually:", height=150)
+                    manual_text = st.text_area("Enter document text manually:", height=150, key="tab1_manual_text")
                     
-                    if manual_text and st.button("Process Manual Text"):
+                    if manual_text and st.button("Process Manual Text", key="tab1_process_button"):
                         # Detect document type
                         document_type = detect_document_type(groq_client, manual_text)
                         st.info(f"Detected document type: {document_type} Card")
@@ -353,7 +353,7 @@ def main():
     
     with tab2:
         st.subheader("Upload your document with specific type")
-        doc_type = st.radio("Select Document Type", ["Aadhar", "PAN"])
+        doc_type = st.radio("Select Document Type", ["Aadhar", "PAN"], key="document_type_radio")
         uploaded_file = st.file_uploader("Upload document (PDF or Image)", 
                                         type=['pdf', 'png', 'jpg', 'jpeg'], 
                                         key="specific_type")
@@ -377,7 +377,7 @@ def main():
                 if document_text:
                     # Show extracted raw text
                     with st.expander("Show Extracted Raw Text"):
-                        st.text_area("Extracted Text", document_text, height=200)
+                        st.text_area("Extracted Text", document_text, height=200, key="tab2_extracted_text")
                     
                     # Extract information
                     analysis = analyze_document(groq_client, document_text, doc_type)
@@ -402,9 +402,9 @@ def main():
                     
                     # Offer manual text input as fallback
                     st.info("As a fallback, you can manually enter the text from your document.")
-                    manual_text = st.text_area("Enter document text manually:", height=150)
+                    manual_text = st.text_area("Enter document text manually:", height=150, key="tab2_manual_text")
                     
-                    if manual_text and st.button("Process Manual Text"):
+                    if manual_text and st.button("Process Manual Text", key="tab2_process_button"):
                         # Extract information
                         analysis = analyze_document(groq_client, manual_text, doc_type)
                         
