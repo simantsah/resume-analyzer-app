@@ -93,6 +93,135 @@ def extract_linkedin_url(text):
     
     return ""
 
+# Calculate the individual scores and overall score based on the algorithm
+def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
+    try:
+        scores = {}
+        
+        # 1. Relevancy Score (already calculated by AI)
+        if parsed_data["Relevancy Score (0-100)"] != "Not Available":
+            try:
+                scores["relevancy"] = float(parsed_data["Relevancy Score (0-100)"])
+            except ValueError:
+                scores["relevancy"] = 0
+        else:
+            scores["relevancy"] = 0
+            
+        # 2. Strong Matches Score (already calculated by AI)
+        if parsed_data["Strong Matches Score"] != "Not Available":
+            try:
+                scores["strong_matches"] = float(parsed_data["Strong Matches Score"])
+            except ValueError:
+                scores["strong_matches"] = 0
+        else:
+            scores["strong_matches"] = 0
+            
+        # 3. Partial Matches Score (already calculated by AI)
+        if parsed_data["Partial Matches Score"] != "Not Available":
+            try:
+                scores["partial_matches"] = float(parsed_data["Partial Matches Score"])
+            except ValueError:
+                scores["partial_matches"] = 0
+        else:
+            scores["partial_matches"] = 0
+        
+        # 4. Experience Score
+        if parsed_data["Total Experience (Years)"] != "Not Available":
+            try:
+                candidate_exp = float(parsed_data["Total Experience (Years)"])
+                scores["experience"] = min((candidate_exp / required_experience) * 100, 100)
+            except ValueError:
+                scores["experience"] = 0
+        else:
+            scores["experience"] = 0
+            
+        # 5. Job Stability Score
+        if parsed_data["Job Stability"] != "Not Available":
+            try:
+                job_stability = float(parsed_data["Job Stability"])
+                # Convert 1-10 scale to actual years tenure if needed
+                if job_stability <= 10:  # Assuming job stability is on 1-10 scale
+                    avg_tenure = (job_stability / 10) * 4  # Convert to years (max 4 years)
+                else:
+                    avg_tenure = job_stability  # Already in years
+                
+                scores["stability"] = min((avg_tenure / stability_threshold) * 100, 100)
+            except ValueError:
+                scores["stability"] = 0
+        else:
+            scores["stability"] = 0
+            
+        # 6. Education & College Rating Score
+        if parsed_data["College Rating"] != "Not Available":
+            if "premium" in parsed_data["College Rating"].lower() and "non" not in parsed_data["College Rating"].lower():
+                scores["college"] = 100  # Top-tier
+            elif "non-premium" in parsed_data["College Rating"].lower():
+                scores["college"] = 70  # Mid-tier
+            else:
+                scores["college"] = 40  # Low-tier or unranked
+        else:
+            scores["college"] = 20  # Unranked or unknown
+            
+        # 7. Leadership Score
+        if parsed_data["Leadership Skills"] != "Not Available":
+            if any(word in parsed_data["Leadership Skills"].lower() for word in 
+                   ["led", "managed", "directed", "leadership", "head", "team lead"]):
+                scores["leadership"] = 100
+            else:
+                scores["leadership"] = 0
+        else:
+            scores["leadership"] = 0
+            
+        # 8. International Experience Score
+        if parsed_data["International Team Experience"] != "Not Available":
+            if any(word in parsed_data["International Team Experience"].lower() for word in 
+                   ["yes", "international", "global", "worldwide", "multinational"]):
+                scores["international"] = 100
+            else:
+                scores["international"] = 0
+        else:
+            scores["international"] = 0
+            
+        # 9. Competitor Experience Score
+        if parsed_data["Competitor Experience"] != "Not Available":
+            if parsed_data["Competitor Experience"].lower().startswith("yes"):
+                if any(word in parsed_data["Competitor Experience"].lower() for word in 
+                       ["anaplan", "workday", "oracle", "sap"]):
+                    scores["competitor"] = 100  # Top competitor
+                else:
+                    scores["competitor"] = 50  # Other competitor
+            else:
+                scores["competitor"] = 0
+        else:
+            scores["competitor"] = 0
+            
+        # Calculate Overall Weighted Score
+        overall_score = (
+            (0.40 * scores["relevancy"]) +
+            (0.15 * scores["experience"]) +
+            (0.10 * scores["stability"]) +
+            (0.10 * scores["college"]) +
+            (0.10 * scores["leadership"]) +
+            (0.10 * scores["international"]) +
+            (0.05 * scores["competitor"])
+        )
+        
+        # Determine Selection Recommendation
+        if overall_score >= 80:
+            recommendation = "Strong Fit ✅ - Call for interview"
+        elif overall_score >= 60:
+            recommendation = "Consider 🤔 - Further screening needed"
+        else:
+            recommendation = "Reject ❌ - Does not meet minimum criteria"
+            
+        return overall_score, recommendation, scores
+    
+    except Exception as e:
+        st.error(f"Error calculating scores: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+        return 0, "Error in calculation", {}
+
 # Call AI model to analyze resume with enhanced evaluation attributes
 def analyze_resume(client, resume_text, job_description):
     competitors = get_planful_competitors()
@@ -124,8 +253,6 @@ def analyze_resume(client, resume_text, job_description):
     Portfolio URL: [Extract any portfolio, GitHub, or personal website URL if present, otherwise leave blank]
     Work History: [List all previous companies and roles]
     Competitor Experience: [Yes/No. Check if resume mentions experience at any of these companies: {competitors_list}]
-    Overall Weighted Score: [Calculate final score 0-100]
-    Selection Recommendation: [Recommend or Do Not Recommend]
     
     Use EXACTLY these field labels in your response, followed by your analysis.
     DO NOT use any markdown formatting in your response.
@@ -214,8 +341,6 @@ def parse_analysis(analysis, resume_text=None):
             "Portfolio URL": ["portfolio url", "portfolio", "github url", "github", "personal website", "personal url", "website"],
             "Work History": ["work history", "employment history", "companies worked for", "previous companies"],
             "Competitor Experience": ["competitor experience", "worked for competitor", "competitor", "competition experience"],
-            "Overall Weighted Score": ["overall weighted score", "overall score", "final score"],
-            "Selection Recommendation": ["selection recommendation", "hiring recommendation", "recommendation"]
         }
         
         # Create a dictionary to store the extracted values
@@ -266,7 +391,7 @@ def parse_analysis(analysis, resume_text=None):
         
         # Special handling for numeric fields
         numeric_fields = ["Total Experience (Years)", "Relevancy Score (0-100)", "Strong Matches Score", 
-                         "Partial Matches Score", "Job Stability", "Overall Weighted Score"]
+                         "Partial Matches Score", "Job Stability"]
         
         for field in numeric_fields:
             if result[field] != "Not Available":
@@ -358,15 +483,32 @@ def parse_analysis(analysis, resume_text=None):
         # Clean all values
         for field in result:
             result[field] = clean_text(result[field])
+            
+        # Calculate Overall Weighted Score and Selection Recommendation using the algorithm
+        # Get required experience from job description - default to 3 years
+        required_experience = 3
+        stability_threshold = 2
+        
+        # Calculate overall score and get recommendation
+        overall_score, recommendation, individual_scores = calculate_scores(result, required_experience, stability_threshold)
+        
+        # Add overall score and recommendation to result
+        result["Overall Weighted Score"] = str(round(overall_score, 2))
+        result["Selection Recommendation"] = recommendation
         
         # Convert to list in the expected order
-        ordered_fields = list(expected_fields.keys())
-        extracted_data = [result.get(field, "Not Available") for field in ordered_fields]
+        columns = list(expected_fields.keys()) + ["Overall Weighted Score", "Selection Recommendation"]
+        extracted_data = [result.get(field, "Not Available") for field in columns]
         
-        # Debugging: Show the extracted data
+        # Debugging: Show the extracted data and individual scores
         with st.expander("Extracted Data (Debugging)"):
-            for k, v in zip(ordered_fields, extracted_data):
+            st.write("### Extracted Fields")
+            for k, v in zip(columns, extracted_data):
                 st.write(f"{k}: {v}")
+                
+            st.write("### Individual Scores")
+            for k, v in individual_scores.items():
+                st.write(f"{k}: {round(v, 2)}")
         
         return extracted_data
     
@@ -453,10 +595,11 @@ def format_excel_workbook(wb, columns):
             
             # Special formatting for Selection Recommendation
             if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
-                if any(word in str(cell.value).lower() for word in ["recommend", "yes", "hire", "select"]):
-                    if "not" not in str(cell.value).lower() and "don't" not in str(cell.value).lower():
-                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                else:
+                if "Strong Fit" in str(cell.value):
+                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                elif "Consider" in str(cell.value):
+                    cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                elif "Reject" in str(cell.value):
                     cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
             
             # URL formatting for LinkedIn and Portfolio
@@ -488,125 +631,21 @@ def format_excel_workbook(wb, columns):
 # Main Streamlit App
 def main():
     st.title("📝 Enhanced Resume Analyzer")
-    st.write("Upload your resumes and paste the job description to get a comprehensive analysis")
-
-    # Load environment variables
-    load_dotenv()
+    st.markdown("Built using the standardized resume scoring algorithm")
     
-    if not os.environ.get("GROQ_API_KEY"):
-        st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
-        return
+    # Add score explanation in sidebar
+    with st.sidebar:
+        st.title("Scoring Algorithm")
+        st.markdown("""
+        ### Overall Score Formula
+        - 40% × Relevancy Score 
+        - 15% × Experience Score
+        - 10% × Job Stability Score
+        - 10% × College Rating
+        - 10% × Leadership Score
+        - 10% × International Experience
+        - 5% × Competitor Experience
         
-    client = initialize_groq_client()
-    uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
-    job_description = st.text_area("Paste the job description here", height=200)
-    
-    # Show competitors list in an expander
-    with st.expander("Planful Competitors List"):
-        st.write(", ".join(get_planful_competitors()))
-    
-    results = []
-    
-    if uploaded_files and job_description:
-        # Add a button to analyze all resumes at once
-        if st.button("Analyze All Resumes"):
-            progress_bar = st.progress(0)
-            total_files = len(uploaded_files)
-            
-            for i, uploaded_file in enumerate(uploaded_files):
-                st.subheader(f"Resume: {uploaded_file.name}")
-                with st.spinner(f"Analyzing {uploaded_file.name}..."):
-                    resume_text = extract_text_from_pdf(uploaded_file)
-                    
-                    if resume_text:
-                        analysis = analyze_resume(client, resume_text, job_description)
-                        if analysis:
-                            parsed_data = parse_analysis(analysis, resume_text)  # Pass resume_text to parse_analysis
-                            if parsed_data:
-                                results.append(parsed_data)
-                                st.success(f"Successfully analyzed {uploaded_file.name}")
-                            else:
-                                st.warning(f"Could not extract structured data for {uploaded_file.name}")
-                    else:
-                        st.error(f"Could not extract text from {uploaded_file.name}")
-                        
-                # Update progress bar
-                progress_bar.progress((i + 1) / total_files)
-            
-            # Complete the progress
-            progress_bar.progress(1.0)
-    
-    if results:
-        st.subheader("Analysis Results")
-        
-        columns = [
-            # Basic attributes
-            "Candidate Name", 
-            "Total Experience (Years)", 
-            "Relevancy Score (0-100)", 
-            "Strong Matches Score",
-            "Strong Matches Reasoning", 
-            "Partial Matches Score",
-            "Partial Matches Reasoning",
-            "All Tech Skills",
-            "Relevant Tech Skills", 
-            "Degree", 
-            "College/University",
-            "Job Applying For",
-            "College Rating",
-            "Job Stability",
-            "Latest Company",
-            "Leadership Skills",
-            "International Team Experience",
-            "Notice Period",
-            "LinkedIn URL",
-            "Portfolio URL",
-            "Work History",
-            "Competitor Experience",
-            
-            # Final Evaluation
-            "Overall Weighted Score",
-            "Selection Recommendation"
-        ]
-        
-        df = pd.DataFrame(results, columns=columns)
-        
-        # Display a simplified version of the dataframe for the UI
-        display_columns = [
-            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
-            "Job Applying For", "College Rating", "Job Stability", "Latest Company",
-            "Competitor Experience", "LinkedIn URL", "Portfolio URL",
-            "Overall Weighted Score", "Selection Recommendation"
-        ]
-        st.dataframe(df[display_columns])
-        
-        # Prepare full results for download
-        with st.spinner("Preparing Excel file..."):
-            # Create a temporary file for download
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
-                # Save DataFrame to Excel
-                df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
-                
-                # Format the Excel file with better styling
-                wb = openpyxl.load_workbook(tmpfile.name)
-                wb = format_excel_workbook(wb, columns)
-                wb.save(tmpfile.name)
-                tmpfile_path = tmpfile.name
-            
-            st.success("Excel file created successfully with all requested evaluation metrics!")
-            
-            # Offer the file for download
-            with open(tmpfile_path, "rb") as file:
-                file_data = file.read()
-                st.download_button(
-                    label="📥 Download Comprehensive Excel Report",
-                    data=file_data,
-                    file_name=f"enhanced_resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-
-            # Clean up the temporary file
-            os.unlink(tmpfile_path)
-
-if __name__ == "__main__":
-    main()
+        ### Selection Categories
+        - **Strong Fit (80-100) ✅**: Call for an interview
+        - **Consider (60-79) 🤔**: Further screening needed
