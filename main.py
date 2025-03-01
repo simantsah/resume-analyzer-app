@@ -639,14 +639,15 @@ def main():
         st.subheader("Analysis Results")
         
         # Create DataFrame with the extracted data
+        # Ensure that results_data is structured correctly
+        df = pd.DataFrame(results_data)
+        
+        # Define the expected columns
         columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Job Applying For", "College Rating", "Job Stability", "Latest Company",
             "LinkedIn URL", "Portfolio URL", "Overall Weighted Score", "Selection Recommendation"
         ]
-        
-        # Ensure that results_data is structured correctly
-        df = pd.DataFrame(results_data, columns=columns)
         
         # Filter to only show columns that exist in our dataframe
         display_columns = [col for col in columns if col in df.columns]
