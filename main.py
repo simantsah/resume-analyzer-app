@@ -6,29 +6,14 @@ import re
 from dotenv import load_dotenv
 import io
 from PIL import Image
-from google.cloud import vision
-from google.oauth2 import service_account
+import requests
 import tempfile
+import json
+from pdf2image import convert_from_bytes
 
 # Initialize AI client
 def initialize_groq_client():
     return Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-# Initialize Google Cloud Vision client
-def initialize_vision_client():
-    # Check if credentials file exists or use service account info from env
-    if os.path.exists("google_credentials.json"):
-        credentials = service_account.Credentials.from_service_account_file("google_credentials.json")
-    elif os.environ.get("GOOGLE_CREDENTIALS"):
-        # Load credentials from environment variable
-        import json
-        service_account_info = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
-        credentials = service_account.Credentials.from_service_account_info(service_account_info)
-    else:
-        st.error("Google Cloud credentials not found. Set up google_credentials.json or GOOGLE_CREDENTIALS env variable.")
-        return None
-    
-    return vision.ImageAnnotatorClient(credentials=credentials)
 
 # Extract text from PDF using PyPDF2 (for text-based PDFs)
 def extract_text_from_pdf(pdf_file):
@@ -40,11 +25,67 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Extract text from PDF using Google Cloud Vision (for scanned PDFs)
-def extract_text_from_pdf_ocr(pdf_file, vision_client):
+# Extract text from image using Azure Computer Vision
+def extract_text_from_image(image_file):
+    # Get Azure Computer Vision API key and endpoint from environment variables
+    subscription_key = os.environ.get("AZURE_VISION_KEY")
+    endpoint = os.environ.get("AZURE_VISION_ENDPOINT")
+    
+    if not subscription_key or not endpoint:
+        st.error("Azure Computer Vision credentials not found. Please set AZURE_VISION_KEY and AZURE_VISION_ENDPOINT in your environment variables.")
+        return None
+    
     try:
-        from pdf2image import convert_from_bytes
+        # Prepare the image for the API
+        image_data = image_file.read()
         
+        # OCR API URL
+        ocr_url = f"{endpoint}vision/v3.2/read/analyze"
+        
+        # Set the headers and parameters
+        headers = {
+            'Ocp-Apim-Subscription-Key': subscription_key,
+            'Content-Type': 'application/octet-stream'
+        }
+        
+        # Call the API
+        response = requests.post(ocr_url, headers=headers, data=image_data)
+        response.raise_for_status()
+        
+        # Get operation location (URL with ID to get the results)
+        operation_location = response.headers["Operation-Location"]
+        
+        # Wait for the operation to complete
+        import time
+        status = "running"
+        max_retries = 10
+        retry_count = 0
+        
+        while status == "running" and retry_count < max_retries:
+            time.sleep(1)
+            get_response = requests.get(operation_location, headers={"Ocp-Apim-Subscription-Key": subscription_key})
+            result = get_response.json()
+            status = result.get("status", "")
+            retry_count += 1
+        
+        # Get the text from the result
+        if status == "succeeded":
+            text = ""
+            read_results = result.get("analyzeResult", {}).get("readResults", [])
+            for page in read_results:
+                for line in page.get("lines", []):
+                    text += line.get("text", "") + "\n"
+            return text
+        else:
+            st.error(f"OCR operation failed with status: {status}")
+            return None
+    except Exception as e:
+        st.error(f"Error extracting text from image: {str(e)}")
+        return None
+
+# Extract text from PDF using Azure Computer Vision
+def extract_text_from_pdf_ocr(pdf_file):
+    try:
         # Create a temporary file to store the PDF content
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
             temp_pdf.write(pdf_file.read())
@@ -54,25 +95,22 @@ def extract_text_from_pdf_ocr(pdf_file, vision_client):
             # Convert PDF to images
             images = convert_from_bytes(open(temp_pdf_path, 'rb').read())
             
-            # Extract text from each image using Cloud Vision
+            # Extract text from each image using Azure Vision
             full_text = ""
             for img in images:
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
                     img.save(temp_img, format='JPEG')
-                    temp_img_path = temp_img.name
+                    img_path = temp_img.name
                 
-                # Use Cloud Vision to extract text
-                with open(temp_img_path, 'rb') as image_file:
-                    content = image_file.read()
-                
-                image = vision.Image(content=content)
-                response = vision_client.text_detection(image=image)
-                page_text = response.text_annotations[0].description if response.text_annotations else ""
-                full_text += page_text + "\n"
+                # Use Azure to extract text
+                with open(img_path, 'rb') as image_file:
+                    img_text = extract_text_from_image(image_file)
+                    if img_text:
+                        full_text += img_text + "\n"
                 
                 # Clean up the temporary image file
-                os.unlink(temp_img_path)
-                
+                os.unlink(img_path)
+            
             # Clean up the temporary PDF file
             os.unlink(temp_pdf_path)
             
@@ -86,28 +124,6 @@ def extract_text_from_pdf_ocr(pdf_file, vision_client):
             
     except Exception as e:
         st.error(f"Error extracting text from PDF using OCR: {str(e)}")
-        return None
-
-# Extract text from image using Google Cloud Vision
-def extract_text_from_image(image_file, vision_client):
-    try:
-        # Convert the uploaded file to bytes
-        image_content = image_file.read()
-        
-        # Create image object
-        image = vision.Image(content=image_content)
-        
-        # Perform text detection
-        response = vision_client.text_detection(image=image)
-        
-        # Extract text from response
-        if response.text_annotations:
-            text = response.text_annotations[0].description
-            return text
-        else:
-            return None
-    except Exception as e:
-        st.error(f"Error extracting text from image: {str(e)}")
         return None
 
 # Call AI model to analyze document and extract information
@@ -244,6 +260,35 @@ def detect_document_type(client, document_text):
         st.error(f"Error detecting document type: {str(e)}")
         return "Unknown"
 
+# Use a simpler OCR solution if cloud services are not available
+def extract_text_using_simple_ocr(image_file):
+    try:
+        # Try to use easyocr if available
+        import easyocr
+        reader = easyocr.Reader(['en'])
+        
+        # Save image to temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
+            temp_img.write(image_file.read())
+            img_path = temp_img.name
+        
+        # Extract text
+        results = reader.readtext(img_path)
+        
+        # Combine all detected text
+        text = "\n".join([result[1] for result in results])
+        
+        # Clean up temporary file
+        os.unlink(img_path)
+        
+        return text if text else None
+    except ImportError:
+        st.error("EasyOCR is not installed. Please install with: pip install easyocr")
+        return None
+    except Exception as e:
+        st.error(f"Error using simple OCR: {str(e)}")
+        return None
+
 # Main Streamlit App
 def main():
     st.title("📄 Aadhar & PAN Card Information Extractor")
@@ -257,13 +302,13 @@ def main():
         st.info("You can get a Groq API key at https://console.groq.com/")
         return
     
-    # Initialize clients
+    # Initialize Groq client
     groq_client = initialize_groq_client()
-    vision_client = initialize_vision_client()
     
-    if not vision_client:
-        st.warning("Google Cloud Vision client could not be initialized. Some OCR features may be limited.")
-        st.info("To use Google Cloud Vision, set up authentication credentials - see documentation below.")
+    # Check for Azure Vision credentials
+    has_azure = os.environ.get("AZURE_VISION_KEY") and os.environ.get("AZURE_VISION_ENDPOINT")
+    if not has_azure:
+        st.warning("Azure Computer Vision credentials not found. The app will attempt to use alternative OCR methods if available.")
     
     # Create tabs for different document types
     tab1, tab2 = st.tabs(["Auto-Detect Document", "Specify Document Type"])
@@ -284,19 +329,41 @@ def main():
                     
                     # If standard PDF extraction failed, try OCR
                     if not document_text or len(document_text) < 50:
-                        st.info("Using Cloud OCR to extract text from PDF...")
+                        st.info("Using OCR to extract text from PDF...")
                         uploaded_file.seek(0)  # Reset file pointer
-                        if vision_client:
-                            document_text = extract_text_from_pdf_ocr(uploaded_file, vision_client)
+                        if has_azure:
+                            document_text = extract_text_from_pdf_ocr(uploaded_file)
                         else:
-                            st.error("Cloud OCR not available. Please set up Google Cloud Vision credentials.")
-                            return
+                            try:
+                                # Try using alternative OCR
+                                import easyocr
+                                st.info("Using EasyOCR for text extraction...")
+                                # Convert PDF to images first
+                                from pdf2image import convert_from_bytes
+                                images = convert_from_bytes(uploaded_file.read())
+                                
+                                # Extract text from first page only to test
+                                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
+                                    images[0].save(temp_img, format='JPEG')
+                                    img_path = temp_img.name
+                                
+                                with open(img_path, 'rb') as img_file:
+                                    document_text = extract_text_using_simple_ocr(img_file)
+                                
+                                os.unlink(img_path)
+                            except ImportError:
+                                st.error("No OCR service available. Please install EasyOCR or set up Azure Computer Vision.")
+                                return
                 else:  # Image file
-                    if vision_client:
-                        document_text = extract_text_from_image(uploaded_file, vision_client)
+                    if has_azure:
+                        document_text = extract_text_from_image(uploaded_file)
                     else:
-                        st.error("Cloud OCR not available. Please set up Google Cloud Vision credentials.")
-                        return
+                        try:
+                            # Try using alternative OCR
+                            document_text = extract_text_using_simple_ocr(uploaded_file)
+                        except Exception as e:
+                            st.error(f"OCR failed: {str(e)}")
+                            return
                 
                 if document_text:
                     # Show extracted raw text
@@ -345,19 +412,41 @@ def main():
                     
                     # If standard PDF extraction failed, try OCR
                     if not document_text or len(document_text) < 50:
-                        st.info("Using Cloud OCR to extract text from PDF...")
+                        st.info("Using OCR to extract text from PDF...")
                         uploaded_file.seek(0)  # Reset file pointer
-                        if vision_client:
-                            document_text = extract_text_from_pdf_ocr(uploaded_file, vision_client)
+                        if has_azure:
+                            document_text = extract_text_from_pdf_ocr(uploaded_file)
                         else:
-                            st.error("Cloud OCR not available. Please set up Google Cloud Vision credentials.")
-                            return
+                            try:
+                                # Try using alternative OCR
+                                import easyocr
+                                st.info("Using EasyOCR for text extraction...")
+                                # Convert PDF to images first
+                                from pdf2image import convert_from_bytes
+                                images = convert_from_bytes(uploaded_file.read())
+                                
+                                # Extract text from first page only to test
+                                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
+                                    images[0].save(temp_img, format='JPEG')
+                                    img_path = temp_img.name
+                                
+                                with open(img_path, 'rb') as img_file:
+                                    document_text = extract_text_using_simple_ocr(img_file)
+                                
+                                os.unlink(img_path)
+                            except ImportError:
+                                st.error("No OCR service available. Please install EasyOCR or set up Azure Computer Vision.")
+                                return
                 else:  # Image file
-                    if vision_client:
-                        document_text = extract_text_from_image(uploaded_file, vision_client)
+                    if has_azure:
+                        document_text = extract_text_from_image(uploaded_file)
                     else:
-                        st.error("Cloud OCR not available. Please set up Google Cloud Vision credentials.")
-                        return
+                        try:
+                            # Try using alternative OCR
+                            document_text = extract_text_using_simple_ocr(uploaded_file)
+                        except Exception as e:
+                            st.error(f"OCR failed: {str(e)}")
+                            return
                 
                 if document_text:
                     # Show extracted raw text
@@ -389,43 +478,71 @@ def main():
     st.markdown("---")
     st.subheader("ℹ️ About this app")
     st.write("""
-    This application extracts information from Aadhar and PAN cards using Google Cloud Vision OCR and AI technology.
+    This application extracts information from Aadhar and PAN cards using OCR and AI technology.
     The extracted information is presented directly in the app.
     
     **Note:** All processing is done securely, and no data is stored by this application.
     
     **Requirements:**
-    - Python packages: streamlit, groq, python-dotenv, Pillow, PyPDF2, google-cloud-vision, pdf2image
+    - Python packages: streamlit, groq, python-dotenv, Pillow, PyPDF2, pdf2image, requests
     - A valid Groq API key must be set in the .env file or environment variables
-    - Google Cloud Vision API credentials (either as a JSON file or in environment variables)
+    - For optimal OCR performance, either:
+      - Azure Computer Vision API credentials
+      - EasyOCR package (pip install easyocr)
     """)
     
-    # Add setup instructions for Google Cloud Vision
-    with st.expander("Google Cloud Vision Setup Instructions"):
+    # Add setup instructions for Azure Computer Vision
+    with st.expander("Azure Computer Vision Setup Instructions"):
         st.markdown("""
-        ### Setting up Google Cloud Vision API
+        ### Setting up Azure Computer Vision API
         
-        1. **Create a Google Cloud account** if you don't already have one
-        2. **Create a new project** in the Google Cloud Console
-        3. **Enable the Vision API** for your project
-        4. **Create a service account** with "Vision AI Client" role
-        5. **Download the JSON credentials file** for your service account
-        6. **Place the credentials file** in the same directory as this app with the name `google_credentials.json`
-        
-        Alternatively, you can set the credentials as an environment variable:
+        1. **Create a Microsoft Azure account** if you don't already have one
+        2. **Create a Computer Vision resource** in the Azure portal
+        3. **Get your API key and endpoint** from the Azure portal
+        4. **Set your environment variables**:
         
         ```bash
         # For Linux/macOS
-        export GOOGLE_CREDENTIALS='{"type":"service_account", ... copy entire JSON content here ...}'
+        export AZURE_VISION_KEY='your_api_key'
+        export AZURE_VISION_ENDPOINT='https://your-resource-name.cognitiveservices.azure.com/'
         
         # For Windows (Command Prompt)
-        set GOOGLE_CREDENTIALS={"type":"service_account", ... copy entire JSON content here ...}
+        set AZURE_VISION_KEY=your_api_key
+        set AZURE_VISION_ENDPOINT=https://your-resource-name.cognitiveservices.azure.com/
         
         # For Windows (PowerShell)
-        $env:GOOGLE_CREDENTIALS='{"type":"service_account", ... copy entire JSON content here ...}'
+        $env:AZURE_VISION_KEY='your_api_key'
+        $env:AZURE_VISION_ENDPOINT='https://your-resource-name.cognitiveservices.azure.com/'
         ```
         
-        For more details, visit the [Google Cloud Vision API documentation](https://cloud.google.com/vision/docs/setup).
+        You can also add these to your .env file:
+        
+        ```
+        AZURE_VISION_KEY=your_api_key
+        AZURE_VISION_ENDPOINT=https://your-resource-name.cognitiveservices.azure.com/
+        ```
+        
+        For more details, visit the [Azure Computer Vision documentation](https://learn.microsoft.com/en-us/azure/cognitive-services/computer-vision/).
+        """)
+    
+    # Add setup instructions for EasyOCR
+    with st.expander("EasyOCR Setup Instructions"):
+        st.markdown("""
+        ### Setting up EasyOCR (Alternative to Azure)
+        
+        If you prefer not to use Azure, you can use EasyOCR, which is a local OCR library that doesn't require API keys.
+        
+        1. **Install EasyOCR**:
+        
+        ```bash
+        pip install easyocr
+        ```
+        
+        Note: EasyOCR requires PyTorch, which will be installed automatically but might take some time.
+        
+        2. **First run will download language models** (about 45MB for English)
+        
+        EasyOCR is a good alternative, but may be slower and less accurate than cloud-based OCR services.
         """)
 
 if __name__ == "__main__":
