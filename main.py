@@ -56,6 +56,16 @@ def extract_text_from_image(image_file):
 
 # Call AI model to analyze document and extract information
 def analyze_document(client, document_text, document_type):
+    # Use conditionals instead of f-strings with escaped characters for these sections
+    if document_type.lower() == 'aadhar':
+        number_field = "Aadhar Number: [extracted number]"
+        address_field = "Address: [extracted address]"
+        gender_field = "Gender: [extracted gender]"
+    else:  # PAN
+        number_field = "PAN Number: [extracted number]"
+        address_field = "Father's Name: [extracted father's name if available]"
+        gender_field = ""
+    
     prompt = f"""
     As a document information extractor, analyze the following {document_type} card text and extract these specific fields:
     
@@ -74,10 +84,10 @@ def analyze_document(client, document_text, document_type):
     
     Format your response EXACTLY as follows, with each field on a new line:
     Full Name: [extracted name]
-    {'Aadhar Number: [extracted number]' if document_type.lower() == 'aadhar' else 'PAN Number: [extracted number]'}
-    {'Address: [extracted address]' if document_type.lower() == 'aadhar' else 'Father\'s Name: [extracted father\'s name if available]'}
+    {number_field}
+    {address_field}
     Date of Birth: [extracted DOB]
-    {'Gender: [extracted gender]' if document_type.lower() == 'aadhar' else ''}
+    {gender_field}
     
     If you cannot find a specific field, respond with "Not Found" for that field.
     Do not include any additional information or explanations in your response.
