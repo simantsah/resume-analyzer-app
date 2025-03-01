@@ -6,14 +6,31 @@ import re
 from dotenv import load_dotenv
 import io
 from PIL import Image
-import pytesseract
-from pdf2image import convert_from_bytes
+from google.cloud import vision
+from google.oauth2 import service_account
+import tempfile
 
 # Initialize AI client
 def initialize_groq_client():
     return Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-# Extract text from PDF
+# Initialize Google Cloud Vision client
+def initialize_vision_client():
+    # Check if credentials file exists or use service account info from env
+    if os.path.exists("google_credentials.json"):
+        credentials = service_account.Credentials.from_service_account_file("google_credentials.json")
+    elif os.environ.get("GOOGLE_CREDENTIALS"):
+        # Load credentials from environment variable
+        import json
+        service_account_info = json.loads(os.environ.get("GOOGLE_CREDENTIALS"))
+        credentials = service_account.Credentials.from_service_account_info(service_account_info)
+    else:
+        st.error("Google Cloud credentials not found. Set up google_credentials.json or GOOGLE_CREDENTIALS env variable.")
+        return None
+    
+    return vision.ImageAnnotatorClient(credentials=credentials)
+
+# Extract text from PDF using PyPDF2 (for text-based PDFs)
 def extract_text_from_pdf(pdf_file):
     try:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -23,29 +40,72 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Extract text from PDF using pdf2image and OCR
-def extract_text_from_pdf_ocr(pdf_file):
+# Extract text from PDF using Google Cloud Vision (for scanned PDFs)
+def extract_text_from_pdf_ocr(pdf_file, vision_client):
     try:
-        # Convert PDF to image
-        images = convert_from_bytes(pdf_file.read())
+        from pdf2image import convert_from_bytes
         
-        # Extract text from each image using OCR
-        text = ""
-        for img in images:
-            img_text = pytesseract.image_to_string(img, lang='eng')
-            text += img_text + "\n"
+        # Create a temporary file to store the PDF content
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
+            temp_pdf.write(pdf_file.read())
+            temp_pdf_path = temp_pdf.name
+        
+        try:
+            # Convert PDF to images
+            images = convert_from_bytes(open(temp_pdf_path, 'rb').read())
             
-        return text if text else None
+            # Extract text from each image using Cloud Vision
+            full_text = ""
+            for img in images:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
+                    img.save(temp_img, format='JPEG')
+                    temp_img_path = temp_img.name
+                
+                # Use Cloud Vision to extract text
+                with open(temp_img_path, 'rb') as image_file:
+                    content = image_file.read()
+                
+                image = vision.Image(content=content)
+                response = vision_client.text_detection(image=image)
+                page_text = response.text_annotations[0].description if response.text_annotations else ""
+                full_text += page_text + "\n"
+                
+                # Clean up the temporary image file
+                os.unlink(temp_img_path)
+                
+            # Clean up the temporary PDF file
+            os.unlink(temp_pdf_path)
+            
+            return full_text if full_text else None
+            
+        except Exception as inner_e:
+            st.error(f"Error processing PDF images: {str(inner_e)}")
+            # Clean up the temporary PDF file
+            os.unlink(temp_pdf_path)
+            return None
+            
     except Exception as e:
         st.error(f"Error extracting text from PDF using OCR: {str(e)}")
         return None
 
-# Extract text from image using OCR
-def extract_text_from_image(image_file):
+# Extract text from image using Google Cloud Vision
+def extract_text_from_image(image_file, vision_client):
     try:
-        image = Image.open(image_file)
-        text = pytesseract.image_to_string(image, lang='eng')
-        return text if text else None
+        # Convert the uploaded file to bytes
+        image_content = image_file.read()
+        
+        # Create image object
+        image = vision.Image(content=image_content)
+        
+        # Perform text detection
+        response = vision_client.text_detection(image=image)
+        
+        # Extract text from response
+        if response.text_annotations:
+            text = response.text_annotations[0].description
+            return text
+        else:
+            return None
     except Exception as e:
         st.error(f"Error extracting text from image: {str(e)}")
         return None
@@ -196,8 +256,14 @@ def main():
         st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
         st.info("You can get a Groq API key at https://console.groq.com/")
         return
-        
-    client = initialize_groq_client()
+    
+    # Initialize clients
+    groq_client = initialize_groq_client()
+    vision_client = initialize_vision_client()
+    
+    if not vision_client:
+        st.warning("Google Cloud Vision client could not be initialized. Some OCR features may be limited.")
+        st.info("To use Google Cloud Vision, set up authentication credentials - see documentation below.")
     
     # Create tabs for different document types
     tab1, tab2 = st.tabs(["Auto-Detect Document", "Specify Document Type"])
@@ -218,11 +284,19 @@ def main():
                     
                     # If standard PDF extraction failed, try OCR
                     if not document_text or len(document_text) < 50:
-                        st.info("Using OCR to extract text from PDF...")
+                        st.info("Using Cloud OCR to extract text from PDF...")
                         uploaded_file.seek(0)  # Reset file pointer
-                        document_text = extract_text_from_pdf_ocr(uploaded_file)
+                        if vision_client:
+                            document_text = extract_text_from_pdf_ocr(uploaded_file, vision_client)
+                        else:
+                            st.error("Cloud OCR not available. Please set up Google Cloud Vision credentials.")
+                            return
                 else:  # Image file
-                    document_text = extract_text_from_image(uploaded_file)
+                    if vision_client:
+                        document_text = extract_text_from_image(uploaded_file, vision_client)
+                    else:
+                        st.error("Cloud OCR not available. Please set up Google Cloud Vision credentials.")
+                        return
                 
                 if document_text:
                     # Show extracted raw text
@@ -230,11 +304,11 @@ def main():
                         st.text_area("Extracted Text", document_text, height=200)
                     
                     # Detect document type
-                    document_type = detect_document_type(client, document_text)
+                    document_type = detect_document_type(groq_client, document_text)
                     st.info(f"Detected document type: {document_type} Card")
                     
                     # Extract information
-                    analysis = analyze_document(client, document_text, document_type)
+                    analysis = analyze_document(groq_client, document_text, document_type)
                     
                     if analysis:
                         extracted_info = parse_analysis(analysis, document_type)
@@ -271,11 +345,19 @@ def main():
                     
                     # If standard PDF extraction failed, try OCR
                     if not document_text or len(document_text) < 50:
-                        st.info("Using OCR to extract text from PDF...")
+                        st.info("Using Cloud OCR to extract text from PDF...")
                         uploaded_file.seek(0)  # Reset file pointer
-                        document_text = extract_text_from_pdf_ocr(uploaded_file)
+                        if vision_client:
+                            document_text = extract_text_from_pdf_ocr(uploaded_file, vision_client)
+                        else:
+                            st.error("Cloud OCR not available. Please set up Google Cloud Vision credentials.")
+                            return
                 else:  # Image file
-                    document_text = extract_text_from_image(uploaded_file)
+                    if vision_client:
+                        document_text = extract_text_from_image(uploaded_file, vision_client)
+                    else:
+                        st.error("Cloud OCR not available. Please set up Google Cloud Vision credentials.")
+                        return
                 
                 if document_text:
                     # Show extracted raw text
@@ -283,7 +365,7 @@ def main():
                         st.text_area("Extracted Text", document_text, height=200)
                     
                     # Extract information
-                    analysis = analyze_document(client, document_text, doc_type)
+                    analysis = analyze_document(groq_client, document_text, doc_type)
                     
                     if analysis:
                         extracted_info = parse_analysis(analysis, doc_type)
@@ -307,16 +389,44 @@ def main():
     st.markdown("---")
     st.subheader("ℹ️ About this app")
     st.write("""
-    This application extracts information from Aadhar and PAN cards using OCR and AI technology.
+    This application extracts information from Aadhar and PAN cards using Google Cloud Vision OCR and AI technology.
     The extracted information is presented directly in the app.
     
     **Note:** All processing is done securely, and no data is stored by this application.
     
     **Requirements:**
-    - Python packages: streamlit, groq, python-dotenv, pytesseract, pdf2image, Pillow, PyPDF2
-    - Tesseract OCR must be installed on the system
+    - Python packages: streamlit, groq, python-dotenv, Pillow, PyPDF2, google-cloud-vision, pdf2image
     - A valid Groq API key must be set in the .env file or environment variables
+    - Google Cloud Vision API credentials (either as a JSON file or in environment variables)
     """)
+    
+    # Add setup instructions for Google Cloud Vision
+    with st.expander("Google Cloud Vision Setup Instructions"):
+        st.markdown("""
+        ### Setting up Google Cloud Vision API
+        
+        1. **Create a Google Cloud account** if you don't already have one
+        2. **Create a new project** in the Google Cloud Console
+        3. **Enable the Vision API** for your project
+        4. **Create a service account** with "Vision AI Client" role
+        5. **Download the JSON credentials file** for your service account
+        6. **Place the credentials file** in the same directory as this app with the name `google_credentials.json`
+        
+        Alternatively, you can set the credentials as an environment variable:
+        
+        ```bash
+        # For Linux/macOS
+        export GOOGLE_CREDENTIALS='{"type":"service_account", ... copy entire JSON content here ...}'
+        
+        # For Windows (Command Prompt)
+        set GOOGLE_CREDENTIALS={"type":"service_account", ... copy entire JSON content here ...}
+        
+        # For Windows (PowerShell)
+        $env:GOOGLE_CREDENTIALS='{"type":"service_account", ... copy entire JSON content here ...}'
+        ```
+        
+        For more details, visit the [Google Cloud Vision API documentation](https://cloud.google.com/vision/docs/setup).
+        """)
 
 if __name__ == "__main__":
     main()
