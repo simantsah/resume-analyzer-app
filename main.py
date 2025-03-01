@@ -4,12 +4,8 @@ import PyPDF2
 import os
 import re
 from dotenv import load_dotenv
-from datetime import datetime
-import tempfile
-from docx import Document
-from PIL import Image
 import io
-import base64
+from PIL import Image
 import pytesseract
 from pdf2image import convert_from_bytes
 
@@ -109,7 +105,7 @@ def analyze_document(client, document_text, document_type):
         ai_response = response.choices[0].message.content
         
         # Debugging: Show AI response in Streamlit
-        with st.expander("AI Response Output (Debugging)"):
+        with st.expander("Raw AI Response Output (Debugging)"):
             st.text_area("Raw AI Response", ai_response, height=200)
         
         return ai_response
@@ -142,38 +138,6 @@ def parse_analysis(analysis, document_type):
                 result[key] = value
     
     return result
-
-# Create a Word document with the extracted information
-def create_document(extracted_info, document_type):
-    doc = Document()
-    
-    # Add a title
-    doc.add_heading(f"{document_type} Card Information", 0)
-    
-    # Add a paragraph explaining the document
-    doc.add_paragraph(f"The following information was extracted from the uploaded {document_type} card on {datetime.now().strftime('%Y-%m-%d at %H:%M:%S')}.")
-    
-    # Add a table with the extracted information
-    table = doc.add_table(rows=1, cols=2)
-    table.style = 'Table Grid'
-    
-    # Add header row
-    header_cells = table.rows[0].cells
-    header_cells[0].text = "Field"
-    header_cells[1].text = "Value"
-    
-    # Add content rows
-    for field, value in extracted_info.items():
-        row_cells = table.add_row().cells
-        row_cells[0].text = field
-        row_cells[1].text = value
-    
-    # Save the document to a BytesIO object
-    doc_io = io.BytesIO()
-    doc.save(doc_io)
-    doc_io.seek(0)
-    
-    return doc_io
 
 # Detect document type (Aadhar or PAN) using AI
 def detect_document_type(client, document_text):
@@ -223,7 +187,7 @@ def detect_document_type(client, document_text):
 # Main Streamlit App
 def main():
     st.title("📄 Aadhar & PAN Card Information Extractor")
-    st.write("Upload an Aadhar card or PAN card image/PDF to extract and download the information")
+    st.write("Upload an Aadhar card or PAN card image/PDF to extract information")
 
     # Load environment variables
     load_dotenv()
@@ -261,6 +225,10 @@ def main():
                     document_text = extract_text_from_image(uploaded_file)
                 
                 if document_text:
+                    # Show extracted raw text
+                    with st.expander("Show Extracted Raw Text"):
+                        st.text_area("Extracted Text", document_text, height=200)
+                    
                     # Detect document type
                     document_type = detect_document_type(client, document_text)
                     st.info(f"Detected document type: {document_type} Card")
@@ -271,21 +239,16 @@ def main():
                     if analysis:
                         extracted_info = parse_analysis(analysis, document_type)
                         
-                        # Display extracted information
-                        st.subheader("Extracted Information")
+                        # Display extracted information in a nice format
+                        st.subheader("📋 Extracted Information")
+                        
+                        # Create a nice looking card for the info
+                        info_html = "<div style='background-color:#f0f2f6;padding:20px;border-radius:10px;'>"
                         for field, value in extracted_info.items():
-                            st.write(f"**{field}:** {value}")
+                            info_html += f"<p><strong>{field}:</strong> {value}</p>"
+                        info_html += "</div>"
                         
-                        # Create document
-                        doc_io = create_document(extracted_info, document_type)
-                        
-                        # Provide download button
-                        st.download_button(
-                            label=f"📥 Download Information as DOCX",
-                            data=doc_io,
-                            file_name=f"{document_type.lower()}_card_info_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
+                        st.markdown(info_html, unsafe_allow_html=True)
                     else:
                         st.error("Failed to analyze the document.")
                 else:
@@ -315,27 +278,26 @@ def main():
                     document_text = extract_text_from_image(uploaded_file)
                 
                 if document_text:
+                    # Show extracted raw text
+                    with st.expander("Show Extracted Raw Text"):
+                        st.text_area("Extracted Text", document_text, height=200)
+                    
                     # Extract information
                     analysis = analyze_document(client, document_text, doc_type)
                     
                     if analysis:
                         extracted_info = parse_analysis(analysis, doc_type)
                         
-                        # Display extracted information
-                        st.subheader("Extracted Information")
+                        # Display extracted information in a nice format
+                        st.subheader("📋 Extracted Information")
+                        
+                        # Create a nice looking card for the info
+                        info_html = "<div style='background-color:#f0f2f6;padding:20px;border-radius:10px;'>"
                         for field, value in extracted_info.items():
-                            st.write(f"**{field}:** {value}")
+                            info_html += f"<p><strong>{field}:</strong> {value}</p>"
+                        info_html += "</div>"
                         
-                        # Create document
-                        doc_io = create_document(extracted_info, doc_type)
-                        
-                        # Provide download button
-                        st.download_button(
-                            label=f"📥 Download Information as DOCX",
-                            data=doc_io,
-                            file_name=f"{doc_type.lower()}_card_info_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        )
+                        st.markdown(info_html, unsafe_allow_html=True)
                     else:
                         st.error("Failed to analyze the document.")
                 else:
@@ -345,13 +307,13 @@ def main():
     st.markdown("---")
     st.subheader("ℹ️ About this app")
     st.write("""
-    This application extracts information from Aadhar and PAN cards using OCR and AI technology. 
-    The extracted information is presented in a downloadable document format.
+    This application extracts information from Aadhar and PAN cards using OCR and AI technology.
+    The extracted information is presented directly in the app.
     
     **Note:** All processing is done securely, and no data is stored by this application.
     
     **Requirements:**
-    - Python packages: streamlit, groq, python-docx, python-dotenv, pytesseract, pdf2image, Pillow, PyPDF2
+    - Python packages: streamlit, groq, python-dotenv, pytesseract, pdf2image, Pillow, PyPDF2
     - Tesseract OCR must be installed on the system
     - A valid Groq API key must be set in the .env file or environment variables
     """)
