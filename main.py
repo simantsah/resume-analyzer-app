@@ -672,4 +672,16 @@ def main():
             
             st.success("Excel file created successfully with all requested evaluation metrics!")
             
-            with open(tmpfile_path,
+            with open(tmpfile_path, "rb") as file:
+                file_data = file.read()
+                st.download_button(
+                    label="📥 Download Comprehensive Excel Report",
+                    data=file_data,
+                    file_name=f"enhanced_resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+            os.unlink(tmpfile_path)
+
+if __name__ == "__main__":
+    main()
