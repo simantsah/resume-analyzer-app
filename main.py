@@ -634,20 +634,23 @@ def main():
     st.markdown("Built using the standardized resume scoring algorithm")
     
     # Add score explanation in sidebar
-   with st.sidebar:
-    st.title("Scoring Algorithm")
-    st.markdown("""
-    ### Overall Score Formula
-    - 40% × Relevancy Score 
-    - 15% × Experience Score
-    - 10% × Job Stability Score
-    - 10% × College Rating
-    - 10% × Leadership Score
-    - 10% × International Experience
-    - 5% × Competitor Experience
-    
-    ### Selection Categories
-    - **Strong Fit (80-100) ✅**: Call for an interview
-    - **Consider (60-79) 🤔**: Further screening needed
-    - **Reject (0-59) ❌**: Does not meet minimum criteria
-    """)
+    with st.sidebar:
+        st.title("Scoring Algorithm")
+        st.markdown("""
+        ### Overall Score Formula
+        - 40% × Relevancy Score 
+        - 15% × Experience Score
+        - 10% × Job Stability Score
+        - 10% × College Rating
+        - 10% × Leadership Score
+        - 10% × International Experience
+        - 5% × Competitor Experience
+        
+        ### Selection Categories
+        - **Strong Fit (80-100) ✅**: Call for an interview
+        - **Consider (60-79) 🤔**: Further screening needed
+        - **Reject (0-59) ❌**: Does not meet minimum criteria
+        """)
+        
+        st.markdown("---")
+        st.markdown("### About")
