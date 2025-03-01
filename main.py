@@ -456,6 +456,7 @@ def parse_analysis(analysis, resume_text=None):
         result["Overall Weighted Score"] = str(round(overall_score, 2))
         result["Selection Recommendation"] = recommendation
         
+        # Convert to list in the expected order
         columns = list(expected_fields.keys()) + ["Overall Weighted Score", "Selection Recommendation"]
         extracted_data = [result.get(field, "Not Available") for field in columns]
         
@@ -607,7 +608,6 @@ def main():
     job_description = st.text_area("Paste the job description here", height=200)
     
     results_data = []
-    columns = None
     
     if uploaded_files and job_description:
         if st.button("Analyze All Resumes"):
@@ -638,16 +638,18 @@ def main():
     if results_data:
         st.subheader("Analysis Results")
         
-        df = pd.DataFrame(results_data)
-        
-        display_columns = [
+        # Create DataFrame with the extracted data
+        columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Job Applying For", "College Rating", "Job Stability", "Latest Company",
             "LinkedIn URL", "Portfolio URL", "Overall Weighted Score", "Selection Recommendation"
         ]
         
+        # Ensure that results_data is structured correctly
+        df = pd.DataFrame(results_data, columns=columns)
+        
         # Filter to only show columns that exist in our dataframe
-        display_columns = [col for col in display_columns if col in df.columns]
+        display_columns = [col for col in columns if col in df.columns]
         
         if display_columns:  # Check if there are any columns to display
             st.dataframe(df[display_columns])
@@ -683,3 +685,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+``
