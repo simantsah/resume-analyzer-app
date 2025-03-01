@@ -6,7 +6,7 @@ import re
 from dotenv import load_dotenv
 from datetime import datetime
 import tempfile
-import docx
+from docx import Document
 from PIL import Image
 import io
 import base64
