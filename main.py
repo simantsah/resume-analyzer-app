@@ -25,22 +25,57 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Extract text using pytesseract (no API key required)
+# Enhanced OCR using pytesseract with improved preprocessing
 def extract_text_using_pytesseract(image_file):
     try:
-        # Import pytesseract
+        # Import necessary libraries
         import pytesseract
-        from PIL import Image
+        from PIL import Image, ImageEnhance, ImageFilter
+        import numpy as np
+        import cv2
         
         # Open the image file
         image = Image.open(image_file)
         
-        # Extract text using pytesseract
-        text = pytesseract.image_to_string(image, lang='eng')
+        # Display original image
+        st.image(image, caption="Original Document", use_container_width=True)
+        
+        # Convert to OpenCV format for preprocessing
+        img_cv = np.array(image)
+        
+        # Convert to grayscale
+        if len(img_cv.shape) == 3:  # Color image
+            gray = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_cv
+            
+        # Apply threshold to get black and white image
+        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # Apply some noise reduction
+        denoised = cv2.fastNlMeansDenoising(binary, None, 10, 7, 21)
+        
+        # Convert back to PIL Image and enhance contrast
+        enhanced_img = Image.fromarray(denoised)
+        enhancer = ImageEnhance.Contrast(enhanced_img)
+        enhanced_img = enhancer.enhance(2)
+        
+        # Display enhanced image
+        st.image(enhanced_img, caption="Enhanced Image for OCR", use_container_width=True)
+        
+        # Use multiple OCR configurations to improve extraction
+        custom_config = r'--oem 3 --psm 6 -l eng'
+        text1 = pytesseract.image_to_string(enhanced_img, config=custom_config)
+        
+        custom_config2 = r'--oem 3 --psm 3 -l eng'
+        text2 = pytesseract.image_to_string(enhanced_img, config=custom_config2)
+        
+        # Combine texts from different OCR configurations
+        text = text1 + "\n" + text2
         
         return text if text else None
     except ImportError:
-        st.error("pytesseract is not installed. Using built-in text extraction.")
+        st.warning("pytesseract or CV2 is not installed. Using alternative text extraction.")
         return extract_text_fallback(image_file)
     except Exception as e:
         st.error(f"Error using pytesseract OCR: {str(e)}")
@@ -49,12 +84,9 @@ def extract_text_using_pytesseract(image_file):
 # Fallback text extraction using PIL's built-in capabilities
 def extract_text_fallback(image_file):
     try:
-        # Use Streamlit's built-in image recognition capabilities
-        st.info("Using built-in image processing. Results may be limited.")
-        
         # Display the image
         image = Image.open(image_file)
-        st.image(image, caption="Uploaded Document", use_column_width=True)
+        st.image(image, caption="Uploaded Document", use_container_width=True)
         
         # Since we can't extract text without OCR, provide a manual input option
         st.warning("Automated text extraction is unavailable. Please enter the text from the document manually.")
@@ -69,7 +101,7 @@ def extract_text_fallback(image_file):
         st.error(f"Error processing image: {str(e)}")
         return None
 
-# Extract text from PDF using pytesseract
+# Extract text from PDF using pytesseract with enhanced processing
 def extract_text_from_pdf_ocr(pdf_file):
     try:
         # Create a temporary file to store the PDF content
@@ -78,14 +110,14 @@ def extract_text_from_pdf_ocr(pdf_file):
             temp_pdf_path = temp_pdf.name
         
         try:
-            # Convert PDF to images
-            images = convert_from_bytes(open(temp_pdf_path, 'rb').read())
+            # Convert PDF to images with higher DPI for better quality
+            images = convert_from_bytes(open(temp_pdf_path, 'rb').read(), dpi=300)
             
             # Extract text from each image using pytesseract
             full_text = ""
             for i, img in enumerate(images):
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
-                    img.save(temp_img, format='JPEG')
+                    img.save(temp_img, format='JPEG', quality=95)
                     img_path = temp_img.name
                 
                 # Open the image and use pytesseract
@@ -112,43 +144,39 @@ def extract_text_from_pdf_ocr(pdf_file):
         st.error(f"Error extracting text from PDF using OCR: {str(e)}")
         return None
 
-# Call AI model to analyze document and extract information
+# Call AI model to analyze document and extract information with improved prompting
 def analyze_document(client, document_text, document_type):
-    # Use conditionals instead of f-strings with escaped characters for these sections
-    if document_type.lower() == 'aadhar':
-        number_field = "Aadhar Number: [extracted number]"
-        address_field = "Address: [extracted address]"
-        gender_field = "Gender: [extracted gender]"
-    else:  # PAN
-        number_field = "PAN Number: [extracted number]"
-        address_field = "Father's Name: [extracted father's name if available]"
-        gender_field = ""
-    
     prompt = f"""
-    As a document information extractor, analyze the following {document_type} card text and extract these specific fields:
+    As a document information extractor, carefully analyze the following {document_type} card text and extract these specific fields.
+    
+    IMPORTANT: Pay special attention to extracting Full Name, Date of Birth, and Father's Name (for PAN) or Address (for Aadhar).
+    Look for patterns like:
+    - Names are typically in all caps or title case
+    - DOB format is usually DD/MM/YYYY or DD-MM-YYYY
+    - Names often have designations like "S/O" (Son of), "D/O" (Daughter of), or "W/O" (Wife of) preceding Father's name
+    - Father's name might appear after phrases like "S/O", "Father's name", "नाम", etc.
     
     If the document is an Aadhar Card, extract:
-    - Full Name
-    - Aadhar Number (12 digits)
-    - Address (complete address including state and pin code)
-    - Date of Birth (in DD/MM/YYYY format)
-    - Gender
+    - Full Name: Look for the most prominent name on the card
+    - Aadhar Number: 12 digits, often with spaces like XXXX XXXX XXXX
+    - Address: Complete address including state and pin code
+    - Date of Birth: Format DD/MM/YYYY
+    - Gender: Male/Female/Other
     
     If the document is a PAN Card, extract:
-    - Full Name
-    - PAN Number (10 character alphanumeric)
-    - Date of Birth (in DD/MM/YYYY format)
-    - Father's Name (if available)
+    - Full Name: Look for the most prominent name in capital letters
+    - PAN Number: 10 character alphanumeric code (like ABCDE1234F)
+    - Date of Birth: Format DD/MM/YYYY 
+    - Father's Name: Usually listed after the primary name
     
     Format your response EXACTLY as follows, with each field on a new line:
     Full Name: [extracted name]
-    {number_field}
-    {address_field}
+    {document_type} Number: [extracted number]
+    {"Address: [extracted address]" if document_type.lower() == 'aadhar' else "Father's Name: [extracted father's name]"}
     Date of Birth: [extracted DOB]
-    {gender_field}
+    {"Gender: [extracted gender]" if document_type.lower() == 'aadhar' else ""}
     
-    If you cannot find a specific field, respond with "Not Found" for that field.
-    Do not include any additional information or explanations in your response.
+    If you cannot find a specific field with high confidence, respond with "Not Found" for that field.
     
     Document Text:
     {document_text}
@@ -158,10 +186,10 @@ def analyze_document(client, document_text, document_type):
         response = client.chat.completions.create(
             model="mixtral-8x7b-32768",  # Using Mixtral for better extraction capabilities
             messages=[
-                {"role": "system", "content": "You are a document information extraction system. Your task is to accurately extract specific fields from identity documents like Aadhar and PAN cards. Be precise and follow the requested format exactly."},
+                {"role": "system", "content": "You are a document information extraction expert specialized in Indian identity documents. Your primary goal is to accurately extract personal information from text, especially names, dates of birth, and relationships. Even if the text is messy from OCR, you're skilled at identifying patterns that indicate personal information."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.2,  # Low temperature for more deterministic extraction
+            temperature=0.1,  # Very low temperature for more deterministic extraction
             max_tokens=1000
         )
         ai_response = response.choices[0].message.content
@@ -175,7 +203,7 @@ def analyze_document(client, document_text, document_type):
         st.error(f"Error during analysis: {str(e)}")
         return None
 
-# Parse the AI response to extract the key-value pairs
+# Enhanced parsing function with better regex patterns
 def parse_analysis(analysis, document_type):
     if not analysis:
         return {}
@@ -192,31 +220,81 @@ def parse_analysis(analysis, document_type):
     lines = analysis.strip().split('\n')
     for line in lines:
         if ':' in line:
-            key, value = line.split(':', 1)
-            key = key.strip()
-            value = value.strip()
-            
-            if key in result and value and value != "Not Found":
-                result[key] = value
+            parts = line.split(':', 1)
+            if len(parts) == 2:
+                key, value = parts
+                key = key.strip()
+                value = value.strip()
+                
+                # Special handling for father's name which might be missed or misformatted
+                if "father" in key.lower() and document_type.lower() == 'pan':
+                    result["Father's Name"] = value if value and value != "Not Found" else "Not Found"
+                # Special handling for other fields
+                elif key in result and value and value != "Not Found":
+                    result[key] = value
+    
+    # If certain critical fields were not found, try to extract them using regex patterns
+    if document_text and (result["Full Name"] == "Not Found" or 
+                         result["Date of Birth"] == "Not Found" or 
+                         (document_type.lower() == 'pan' and result["Father's Name"] == "Not Found")):
+        
+        # Try to find name patterns
+        if result["Full Name"] == "Not Found":
+            name_patterns = [
+                r'Name\s*:\s*([A-Z][a-zA-Z\s\.]+)',
+                r'NAME\s*:\s*([A-Z][a-zA-Z\s\.]+)',
+                r'([A-Z]{2,}\s+[A-Z]{2,}(?:\s+[A-Z]{2,})?)'
+            ]
+            for pattern in name_patterns:
+                matches = re.search(pattern, document_text)
+                if matches:
+                    result["Full Name"] = matches.group(1).strip()
+                    break
+        
+        # Try to find DOB patterns
+        if result["Date of Birth"] == "Not Found":
+            dob_patterns = [
+                r'(?:DOB|Date of Birth|बर्थ|DOB|Birth)[\s:]*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})',
+                r'(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})'
+            ]
+            for pattern in dob_patterns:
+                matches = re.search(pattern, document_text)
+                if matches:
+                    result["Date of Birth"] = matches.group(1).strip()
+                    break
+        
+        # Try to find father's name patterns for PAN
+        if document_type.lower() == 'pan' and result["Father's Name"] == "Not Found":
+            father_patterns = [
+                r'(?:Father|S/O|D/O|W/O|Son of|Daughter of|Wife of)[\'s]*\s*(?:Name\s*)?[:]*\s*([A-Z][a-zA-Z\s\.]+)',
+                r'(?:पिता|फादर).*?[:]*\s*([A-Z][a-zA-Z\s\.]+)'
+            ]
+            for pattern in father_patterns:
+                matches = re.search(pattern, document_text, re.IGNORECASE)
+                if matches:
+                    result["Father's Name"] = matches.group(1).strip()
+                    break
     
     return result
 
-# Detect document type (Aadhar or PAN) using AI
+# Detect document type with improved patterns
 def detect_document_type(client, document_text):
     prompt = f"""
     Analyze the following document text and determine if it's an Aadhar Card or a PAN Card. 
     
     Characteristics of an Aadhar Card:
-    - Contains a 12-digit Aadhar number
+    - Contains a 12-digit Aadhar number (possibly with spaces like XXXX XXXX XXXX)
     - Has the UIDAI logo or mentions UIDAI
-    - Contains a complete address
-    - Usually has "Government of India" text
+    - Contains a complete address including state and pincode
+    - Usually has "Government of India" or "भारत सरकार" text
+    - Often has the phrase "Unique Identification Authority of India"
     
     Characteristics of a PAN Card:
-    - Contains a 10-character PAN number (alphanumeric)
+    - Contains a 10-character PAN number (alphanumeric with format like ABCDE1234F)
     - Usually has "Income Tax Department" or "Permanent Account Number" text
     - Often mentions "Government of India" or "भारत सरकार"
-    - Contains "Date of Birth" but no address
+    - Contains "Date of Birth" but usually no address
+    - May contain "PAN" or "Permanent Account Number" text
     
     Document Text:
     {document_text}
@@ -228,18 +306,24 @@ def detect_document_type(client, document_text):
         response = client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
-                {"role": "system", "content": "You are a document classifier that can identify Indian identity documents."},
+                {"role": "system", "content": "You are a document classifier specialized in identifying Indian identity documents."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.2,
+            temperature=0.1,
             max_tokens=10
         )
         doc_type = response.choices[0].message.content.strip()
         
         # Validate response
         if doc_type not in ["Aadhar", "PAN"]:
-            # Default to Aadhar if uncertain
-            doc_type = "Aadhar"
+            # Try to detect based on patterns
+            if re.search(r'\b\d{4}\s?\d{4}\s?\d{4}\b', document_text) or "uidai" in document_text.lower():
+                doc_type = "Aadhar"
+            elif re.search(r'\b[A-Z]{5}\d{4}[A-Z]\b', document_text):
+                doc_type = "PAN"
+            else:
+                # Default to Aadhar if uncertain
+                doc_type = "Aadhar"
         
         return doc_type
     except Exception as e:
@@ -277,6 +361,9 @@ def main():
         uploaded_file = st.file_uploader("Upload Aadhar or PAN card (PDF or Image)", 
                                         type=['pdf', 'png', 'jpg', 'jpeg'], 
                                         key="auto_detect")
+        
+        # Add global variable to store document text for parsing
+        document_text = None
         
         if uploaded_file:
             with st.spinner("Processing document..."):
@@ -434,6 +521,7 @@ def main():
     
     **Requirements:**
     - Python packages: streamlit, groq, python-dotenv, Pillow, PyPDF2, pdf2image
+    - For enhanced OCR: pytesseract, opencv-python
     - A valid Groq API key must be set in the .env file, environment variables, or entered manually
     - For optimal OCR performance:
       - Tesseract OCR (pip install pytesseract) and Tesseract installed on your system
@@ -453,10 +541,10 @@ def main():
            - **macOS**: `brew install tesseract`
            - **Linux**: `sudo apt install tesseract-ocr`
         
-        2. **Install the Python wrapper**:
+        2. **Install the Python wrapper and OpenCV for image processing**:
         
            ```bash
-           pip install pytesseract
+           pip install pytesseract opencv-python
            ```
         
         3. **Make sure Tesseract is in your PATH**
