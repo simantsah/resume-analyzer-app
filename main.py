@@ -646,9 +646,10 @@ def main():
             "LinkedIn URL", "Portfolio URL", "Overall Weighted Score", "Selection Recommendation"
         ]
         
+        # Filter to only show columns that exist in our dataframe
         display_columns = [col for col in display_columns if col in df.columns]
         
-        if display_columns:
+        if display_columns:  # Check if there are any columns to display
             st.dataframe(df[display_columns])
         else:
             st.warning("No columns to display.")
@@ -657,7 +658,13 @@ def main():
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
                 df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
                 wb = openpyxl.load_workbook(tmpfile.name)
-                wb = format_excel_workbook(wb, display_columns)
+                
+                # Ensure that display_columns is not empty before passing it to the formatting function
+                if display_columns:
+                    wb = format_excel_workbook(wb, display_columns)
+                else:
+                    st.warning("No columns available for formatting.")
+                
                 wb.save(tmpfile.name)
                 tmpfile_path = tmpfile.name
             
