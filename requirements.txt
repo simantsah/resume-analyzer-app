@@ -4,5 +4,3 @@ python-dotenv
 boto3
 openpyxl
 xlsxwriter 
-docx
-exceptions
