@@ -1,6 +1,3 @@
-Certainly! Below is the complete code for the Streamlit app that analyzes resumes based on the provided logic. I've ensured that the original logic remains intact while completing the code. The app includes functionality for extracting information from resumes, calculating scores, and providing recommendations based on the analysis.
-
-```python
 import streamlit as st
 from groq import Groq
 import PyPDF2
@@ -36,55 +33,44 @@ def get_planful_competitors():
         "CCH Tagetik", "Infor CPM", "Syntellis", "Longview"
     ]
 
-# Extract LinkedIn URL directly from resume text - IMPROVED VERSION
+# Extract LinkedIn URL directly from resume text
 def extract_linkedin_url(text):
     if not text:
         return ""
     
-    # First check for common LinkedIn URL patterns
     patterns = [
-        r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*',  # Standard format
-        r'linkedin\.com/in/[\w-]+(?:/[\w-]+)*',                     # Without http(s)
-        r'www\.linkedin\.com/in/[\w-]+(?:/[\w-]+)*',                # With www but no http(s)
-        r'linkedin:\s*https?://(?:www\.)?linkedin\.com/in/[\w-]+',  # With linkedin: prefix
+        r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'www\.linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'linkedin:\s*https?://(?:www\.)?linkedin\.com/in/[\w-]+',
     ]
     
     for pattern in patterns:
         matches = re.findall(pattern, text, re.IGNORECASE)
         if matches:
-            # Ensure URL has proper prefix
             url = matches[0]
             if not url.startswith('http'):
                 url = 'https://' + ('' if url.startswith('www.') or url.startswith('linkedin.com') else 'www.') + url
-                # Handle cases where the url starts with 'linkedin.com'
                 if url.startswith('https://linkedin.com'):
                     url = url.replace('https://linkedin.com', 'https://www.linkedin.com')
-            
-            # Clean any trailing punctuation or spaces
             url = re.sub(r'[.,;:)\s]+$', '', url)
-            
             return url
     
-    # If standard patterns fail, look for cases where "LinkedIn" is mentioned with a URL nearby
     linkedin_mention = re.search(r'linkedin[\s:]*([^\s]+)', text, re.IGNORECASE)
     if linkedin_mention:
         potential_url = linkedin_mention.group(1)
-        # If it looks like a URL, return it properly formatted
         if '.' in potential_url and '/' in potential_url:
-            # Clean up the URL
             url = re.sub(r'[.,;:)\s]+$', '', potential_url)
             if not url.startswith('http'):
                 url = 'https://' + ('' if url.startswith('www.') else 'www.') + url
             return url
     
-    # Look for any URL that might appear near the word "LinkedIn"
     linkedin_context = re.search(r'linkedin.*?(https?://[^\s]+)', text, re.IGNORECASE)
     if linkedin_context:
         url = linkedin_context.group(1)
         url = re.sub(r'[.,;:)\s]+$', '', url)
         return url
     
-    # Last resort: check if there's any mention of LinkedIn plus a URL within close proximity
     lines_with_linkedin = [line for line in text.split('\n') if 'linkedin' in line.lower()]
     for line in lines_with_linkedin:
         url_match = re.search(r'https?://[^\s]+', line)
@@ -100,7 +86,6 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
     try:
         scores = {}
         
-        # 1. Relevancy Score (already calculated by AI)
         if parsed_data["Relevancy Score (0-100)"] != "Not Available":
             try:
                 scores["relevancy"] = float(parsed_data["Relevancy Score (0-100)"])
@@ -109,7 +94,6 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["relevancy"] = 0
             
-        # 2. Strong Matches Score (already calculated by AI)
         if parsed_data["Strong Matches Score"] != "Not Available":
             try:
                 scores["strong_matches"] = float(parsed_data["Strong Matches Score"])
@@ -118,7 +102,6 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["strong_matches"] = 0
             
-        # 3. Partial Matches Score (already calculated by AI)
         if parsed_data["Partial Matches Score"] != "Not Available":
             try:
                 scores["partial_matches"] = float(parsed_data["Partial Matches Score"])
@@ -127,7 +110,6 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["partial_matches"] = 0
         
-        # 4. Experience Score
         if parsed_data["Total Experience (Years)"] != "Not Available":
             try:
                 candidate_exp = float(parsed_data["Total Experience (Years)"])
@@ -137,15 +119,13 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["experience"] = 0
             
-        # 5. Job Stability Score
         if parsed_data["Job Stability"] != "Not Available":
             try:
                 job_stability = float(parsed_data["Job Stability"])
-                # Convert 1-10 scale to actual years tenure if needed
-                if job_stability <= 10:  # Assuming job stability is on 1-10 scale
-                    avg_tenure = (job_stability / 10) * 4  # Convert to years (max 4 years)
+                if job_stability <= 10:
+                    avg_tenure = (job_stability / 10) * 4
                 else:
-                    avg_tenure = job_stability  # Already in years
+                    avg_tenure = job_stability
                 
                 scores["stability"] = min((avg_tenure / stability_threshold) * 100, 100)
             except ValueError:
@@ -153,18 +133,16 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["stability"] = 0
             
-        # 6. Education & College Rating Score
         if parsed_data["College Rating"] != "Not Available":
             if "premium" in parsed_data["College Rating"].lower() and "non" not in parsed_data["College Rating"].lower():
-                scores["college"] = 100  # Top-tier
+                scores["college"] = 100
             elif "non-premium" in parsed_data["College Rating"].lower():
-                scores["college"] = 70  # Mid-tier
+                scores["college"] = 70
             else:
-                scores["college"] = 40  # Low-tier or unranked
+                scores["college"] = 40
         else:
-            scores["college"] = 20  # Unranked or unknown
+            scores["college"] = 20
             
-        # 7. Leadership Score
         if parsed_data["Leadership Skills"] != "Not Available":
             if any(word in parsed_data["Leadership Skills"].lower() for word in 
                    ["led", "managed", "directed", "leadership", "head", "team lead"]):
@@ -174,7 +152,6 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["leadership"] = 0
             
-        # 8. International Experience Score
         if parsed_data["International Team Experience"] != "Not Available":
             if any(word in parsed_data["International Team Experience"].lower() for word in 
                    ["yes", "international", "global", "worldwide", "multinational"]):
@@ -184,20 +161,18 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["international"] = 0
             
-        # 9. Competitor Experience Score
         if parsed_data["Competitor Experience"] != "Not Available":
             if parsed_data["Competitor Experience"].lower().startswith("yes"):
                 if any(word in parsed_data["Competitor Experience"].lower() for word in 
                        ["anaplan", "workday", "oracle", "sap"]):
-                    scores["competitor"] = 100  # Top competitor
+                    scores["competitor"] = 100
                 else:
-                    scores["competitor"] = 50  # Other competitor
+                    scores["competitor"] = 50
             else:
                 scores["competitor"] = 0
         else:
             scores["competitor"] = 0
             
-        # Calculate Overall Weighted Score
         overall_score = (
             (0.40 * scores["relevancy"]) +
             (0.15 * scores["experience"]) +
@@ -208,7 +183,6 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
             (0.05 * scores["competitor"])
         )
         
-        # Determine Selection Recommendation
         if overall_score >= 80:
             recommendation = "Strong Fit ✅ - Call for interview"
         elif overall_score >= 60:
@@ -431,32 +405,25 @@ def parse_analysis(analysis, resume_text=None):
         
         # Handle LinkedIn URL extraction with improved method
         if resume_text:
-            # First check if we already have a valid LinkedIn URL
             if result["LinkedIn URL"] != "Not Available":
-                # If the value contains a valid URL, extract it
                 linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
                 if linkedin_match:
                     result["LinkedIn URL"] = linkedin_match.group(0)
                 else:
-                    # Try to extract from the value itself if it's not already a URL
                     extracted_url = extract_linkedin_url(result["LinkedIn URL"])
                     if extracted_url:
                         result["LinkedIn URL"] = extracted_url
                     else:
-                        # If not found in the field, try from the resume text
                         result["LinkedIn URL"] = extract_linkedin_url(resume_text)
             else:
-                # If no LinkedIn URL was identified by the AI, search the resume text directly
                 result["LinkedIn URL"] = extract_linkedin_url(resume_text)
         else:
-            # Fallback to original approach if resume text not available
             if result["LinkedIn URL"] != "Not Available":
                 linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/\S+', result["LinkedIn URL"])
                 if linkedin_match:
                     result["LinkedIn URL"] = linkedin_match.group(0)
                 else:
                     linked_in_text = result["LinkedIn URL"].lower()
-                    # If it says "not mentioned" or similar, set to empty string
                     if any(phrase in linked_in_text for phrase in ["not available", "not mentioned", "not found", "no linkedin"]):
                         result["LinkedIn URL"] = ""
             else:
@@ -464,7 +431,6 @@ def parse_analysis(analysis, resume_text=None):
         
         # For Portfolio URL - use more specific extraction
         if result["Portfolio URL"] != "Not Available":
-            # Look for common portfolio URLs
             portfolio_match = re.search(r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|behance\.net|dribbble\.com|[\w-]+\.(?:com|io|org|net))/\S+', result["Portfolio URL"])
             if portfolio_match:
                 result["Portfolio URL"] = portfolio_match.group(0)
@@ -473,36 +439,26 @@ def parse_analysis(analysis, resume_text=None):
         else:
             result["Portfolio URL"] = ""
         
-        # Double-check competitor experience using work history
-        # First, ensure we have work history data
         if result["Work History"] == "Not Available" and "Latest Company" in result and result["Latest Company"] != "Not Available":
-            result["Work History"] = result["Latest Company"]  # Use at least the latest company
+            result["Work History"] = result["Latest Company"]
 
-        # Check for competitor experience either from AI or manually
         if result["Competitor Experience"] == "Not Available" or not any(word in result["Competitor Experience"].lower() for word in ["yes", "no"]):
             result["Competitor Experience"] = check_competitor_experience(result["Work History"], get_planful_competitors())
             
-        # Clean all values
         for field in result:
             result[field] = clean_text(result[field])
             
-        # Calculate Overall Weighted Score and Selection Recommendation using the algorithm
-        # Get required experience from job description - default to 3 years
         required_experience = 3
         stability_threshold = 2
         
-        # Calculate overall score and get recommendation
         overall_score, recommendation, individual_scores = calculate_scores(result, required_experience, stability_threshold)
         
-        # Add overall score and recommendation to result
         result["Overall Weighted Score"] = str(round(overall_score, 2))
         result["Selection Recommendation"] = recommendation
         
-        # Convert to list in the expected order
         columns = list(expected_fields.keys()) + ["Overall Weighted Score", "Selection Recommendation"]
         extracted_data = [result.get(field, "Not Available") for field in columns]
         
-        # Debugging: Show the extracted data and individual scores
         with st.expander("Extracted Data (Debugging)"):
             st.write("### Extracted Fields")
             for k, v in zip(columns, extracted_data):
@@ -524,28 +480,21 @@ def parse_analysis(analysis, resume_text=None):
 def format_excel_workbook(wb, columns):
     ws = wb.active
     
-    # Define styles
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     
-    # Header style
     header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
     header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
     header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     
-    # Normal cell style
     normal_font = Font(name='Calibri', size=11)
     normal_alignment = Alignment(vertical='center', wrap_text=True)
     
-    # Score cell style
     score_alignment = Alignment(horizontal='center', vertical='center')
     
-    # URL cell style
     url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
     
-    # Competitor style
     competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
     
-    # Border style
     thin_border = Border(
         left=Side(style='thin'),
         right=Side(style='thin'),
@@ -553,7 +502,6 @@ def format_excel_workbook(wb, columns):
         bottom=Side(style='thin')
     )
     
-    # Apply header styles
     for col_num, column in enumerate(columns, 1):
         cell = ws.cell(row=1, column=col_num)
         cell.font = header_font
@@ -561,7 +509,6 @@ def format_excel_workbook(wb, columns):
         cell.alignment = header_alignment
         cell.border = thin_border
     
-    # Apply styles to data cells and adjust column widths
     for row in range(2, ws.max_row + 1):
         for col in range(1, ws.max_column + 1):
             cell = ws.cell(row=row, column=col)
@@ -569,12 +516,10 @@ def format_excel_workbook(wb, columns):
             cell.alignment = normal_alignment
             cell.border = thin_border
             
-            # Apply centered alignment to score columns
             column_name = columns[col-1]
             if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
                 cell.alignment = score_alignment
                 
-                # Conditional formatting for numeric scores
                 if cell.value not in ["Not Available", None, ""]:
                     try:
                         if any(term in column_name for term in ["Score", "Job Stability"]):
@@ -588,14 +533,12 @@ def format_excel_workbook(wb, columns):
                     except (ValueError, TypeError):
                         pass
             
-            # Special formatting for College Rating
             if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
                 if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
                 elif "non-premium" in str(cell.value).lower():
                     cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
             
-            # Special formatting for Selection Recommendation
             if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
                 if "Strong Fit" in str(cell.value):
                     cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
@@ -604,18 +547,15 @@ def format_excel_workbook(wb, columns):
                 elif "Reject" in str(cell.value):
                     cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
             
-            # URL formatting for LinkedIn and Portfolio
             if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
                 cell.font = url_font
                 cell.hyperlink = cell.value
             
-            # Competitor formatting
             if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
                 if cell.value.lower().startswith("yes"):
                     cell.font = competitor_yes_font
                     cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
     
-    # Adjust column widths
     for col_num, column in enumerate(columns, 1):
         column_letter = openpyxl.utils.get_column_letter(col_num)
         if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
@@ -625,7 +565,6 @@ def format_excel_workbook(wb, columns):
         else:
             ws.column_dimensions[column_letter].width = 18
     
-    # Freeze the header row
     ws.freeze_panes = "A2"
     
     return wb
@@ -635,7 +574,6 @@ def main():
     st.title("📝 Enhanced Resume Analyzer")
     st.markdown("Built using the standardized resume scoring algorithm")
     
-    # Add score explanation in sidebar
     with st.sidebar:
         st.title("Scoring Algorithm")
         st.markdown("""
@@ -658,7 +596,6 @@ def main():
         st.markdown("### About This App")
         st.write("This app analyzes resumes against job descriptions using AI and provides a scoring system based on various criteria.")
     
-    # Load environment variables
     load_dotenv()
     
     if not os.environ.get("GROQ_API_KEY"):
@@ -666,4 +603,76 @@ def main():
         return
         
     client = initialize_groq_client()
-    uploaded_files = st.file_uploader
+    uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
+    job_description = st.text_area("Paste the job description here", height=200)
+    
+    results_data = []
+    columns = None
+    
+    if uploaded_files and job_description:
+        if st.button("Analyze All Resumes"):
+            progress_bar = st.progress(0)
+            total_files = len(uploaded_files)
+            
+            for i, uploaded_file in enumerate(uploaded_files):
+                st.subheader(f"Resume: {uploaded_file.name}")
+                with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                    resume_text = extract_text_from_pdf(uploaded_file)
+                    
+                    if resume_text:
+                        analysis = analyze_resume(client, resume_text, job_description)
+                        if analysis:
+                            parsed_data = parse_analysis(analysis, resume_text)
+                            if parsed_data:
+                                results_data.append(parsed_data)
+                                st.success(f"Successfully analyzed {uploaded_file.name}")
+                            else:
+                                st.warning(f"Could not extract structured data for {uploaded_file.name}")
+                    else:
+                        st.error(f"Could not extract text from {uploaded_file.name}")
+                        
+                progress_bar.progress((i + 1) / total_files)
+            
+            progress_bar.progress(1.0)
+    
+    if results_data:
+        st.subheader("Analysis Results")
+        
+        df = pd.DataFrame(results_data)
+        
+        display_columns = [
+            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
+            "Job Applying For", "College Rating", "Job Stability", "Latest Company",
+            "LinkedIn URL", "Portfolio URL", "Overall Weighted Score", "Selection Recommendation"
+        ]
+        
+        display_columns = [col for col in display_columns if col in df.columns]
+        
+        if display_columns:
+            st.dataframe(df[display_columns])
+        else:
+            st.warning("No columns to display.")
+        
+        with st.spinner("Preparing Excel file..."):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
+                df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
+                wb = openpyxl.load_workbook(tmpfile.name)
+                wb = format_excel_workbook(wb, display_columns)
+                wb.save(tmpfile.name)
+                tmpfile_path = tmpfile.name
+            
+            st.success("Excel file created successfully with all requested evaluation metrics!")
+            
+            with open(tmpfile_path, "rb") as file:
+                file_data = file.read()
+                st.download_button(
+                    label="📥 Download Comprehensive Excel Report",
+                    data=file_data,
+                    file_name=f"enhanced_resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+            os.unlink(tmpfile_path)
+
+if __name__ == "__main__":
+    main()
