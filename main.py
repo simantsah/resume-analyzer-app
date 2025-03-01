@@ -145,7 +145,7 @@ def parse_analysis(analysis, document_type):
 
 # Create a Word document with the extracted information
 def create_document(extracted_info, document_type):
-    doc = docx.Document()
+    doc = Document()
     
     # Add a title
     doc.add_heading(f"{document_type} Card Information", 0)
