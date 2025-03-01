@@ -25,65 +25,51 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Extract text from image using Azure Computer Vision
-def extract_text_from_image(image_file):
-    # Get Azure Computer Vision API key and endpoint from environment variables
-    subscription_key = os.environ.get("AZURE_VISION_KEY")
-    endpoint = os.environ.get("AZURE_VISION_ENDPOINT")
-    
-    if not subscription_key or not endpoint:
-        st.error("Azure Computer Vision credentials not found. Please set AZURE_VISION_KEY and AZURE_VISION_ENDPOINT in your environment variables.")
-        return None
-    
+# Extract text using pytesseract (no API key required)
+def extract_text_using_pytesseract(image_file):
     try:
-        # Prepare the image for the API
-        image_data = image_file.read()
+        # Import pytesseract
+        import pytesseract
+        from PIL import Image
         
-        # OCR API URL
-        ocr_url = f"{endpoint}vision/v3.2/read/analyze"
+        # Open the image file
+        image = Image.open(image_file)
         
-        # Set the headers and parameters
-        headers = {
-            'Ocp-Apim-Subscription-Key': subscription_key,
-            'Content-Type': 'application/octet-stream'
-        }
+        # Extract text using pytesseract
+        text = pytesseract.image_to_string(image, lang='eng')
         
-        # Call the API
-        response = requests.post(ocr_url, headers=headers, data=image_data)
-        response.raise_for_status()
+        return text if text else None
+    except ImportError:
+        st.error("pytesseract is not installed. Using built-in text extraction.")
+        return extract_text_fallback(image_file)
+    except Exception as e:
+        st.error(f"Error using pytesseract OCR: {str(e)}")
+        return extract_text_fallback(image_file)
+
+# Fallback text extraction using PIL's built-in capabilities
+def extract_text_fallback(image_file):
+    try:
+        # Use Streamlit's built-in image recognition capabilities
+        st.info("Using built-in image processing. Results may be limited.")
         
-        # Get operation location (URL with ID to get the results)
-        operation_location = response.headers["Operation-Location"]
+        # Display the image
+        image = Image.open(image_file)
+        st.image(image, caption="Uploaded Document", use_column_width=True)
         
-        # Wait for the operation to complete
-        import time
-        status = "running"
-        max_retries = 10
-        retry_count = 0
+        # Since we can't extract text without OCR, provide a manual input option
+        st.warning("Automated text extraction is unavailable. Please enter the text from the document manually.")
+        manual_text = st.text_area("Enter document text manually:", height=150)
         
-        while status == "running" and retry_count < max_retries:
-            time.sleep(1)
-            get_response = requests.get(operation_location, headers={"Ocp-Apim-Subscription-Key": subscription_key})
-            result = get_response.json()
-            status = result.get("status", "")
-            retry_count += 1
-        
-        # Get the text from the result
-        if status == "succeeded":
-            text = ""
-            read_results = result.get("analyzeResult", {}).get("readResults", [])
-            for page in read_results:
-                for line in page.get("lines", []):
-                    text += line.get("text", "") + "\n"
-            return text
+        if manual_text:
+            return manual_text
         else:
-            st.error(f"OCR operation failed with status: {status}")
+            st.error("Manual text input required for analysis.")
             return None
     except Exception as e:
-        st.error(f"Error extracting text from image: {str(e)}")
+        st.error(f"Error processing image: {str(e)}")
         return None
 
-# Extract text from PDF using Azure Computer Vision
+# Extract text from PDF using pytesseract
 def extract_text_from_pdf_ocr(pdf_file):
     try:
         # Create a temporary file to store the PDF content
@@ -95,16 +81,16 @@ def extract_text_from_pdf_ocr(pdf_file):
             # Convert PDF to images
             images = convert_from_bytes(open(temp_pdf_path, 'rb').read())
             
-            # Extract text from each image using Azure Vision
+            # Extract text from each image using pytesseract
             full_text = ""
-            for img in images:
+            for i, img in enumerate(images):
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
                     img.save(temp_img, format='JPEG')
                     img_path = temp_img.name
                 
-                # Use Azure to extract text
+                # Open the image and use pytesseract
                 with open(img_path, 'rb') as image_file:
-                    img_text = extract_text_from_image(image_file)
+                    img_text = extract_text_using_pytesseract(image_file)
                     if img_text:
                         full_text += img_text + "\n"
                 
@@ -260,35 +246,6 @@ def detect_document_type(client, document_text):
         st.error(f"Error detecting document type: {str(e)}")
         return "Unknown"
 
-# Use a simpler OCR solution if cloud services are not available
-def extract_text_using_simple_ocr(image_file):
-    try:
-        # Try to use easyocr if available
-        import easyocr
-        reader = easyocr.Reader(['en'])
-        
-        # Save image to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
-            temp_img.write(image_file.read())
-            img_path = temp_img.name
-        
-        # Extract text
-        results = reader.readtext(img_path)
-        
-        # Combine all detected text
-        text = "\n".join([result[1] for result in results])
-        
-        # Clean up temporary file
-        os.unlink(img_path)
-        
-        return text if text else None
-    except ImportError:
-        st.error("EasyOCR is not installed. Please install with: pip install easyocr")
-        return None
-    except Exception as e:
-        st.error(f"Error using simple OCR: {str(e)}")
-        return None
-
 # Main Streamlit App
 def main():
     st.title("📄 Aadhar & PAN Card Information Extractor")
@@ -300,15 +257,17 @@ def main():
     if not os.environ.get("GROQ_API_KEY"):
         st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
         st.info("You can get a Groq API key at https://console.groq.com/")
-        return
+        
+        # Provide option for manual key entry
+        manual_key = st.text_input("Enter your Groq API key:", type="password")
+        if manual_key:
+            os.environ["GROQ_API_KEY"] = manual_key
+            st.success("API key set for this session!")
+        else:
+            return
     
     # Initialize Groq client
     groq_client = initialize_groq_client()
-    
-    # Check for Azure Vision credentials
-    has_azure = os.environ.get("AZURE_VISION_KEY") and os.environ.get("AZURE_VISION_ENDPOINT")
-    if not has_azure:
-        st.warning("Azure Computer Vision credentials not found. The app will attempt to use alternative OCR methods if available.")
     
     # Create tabs for different document types
     tab1, tab2 = st.tabs(["Auto-Detect Document", "Specify Document Type"])
@@ -331,39 +290,9 @@ def main():
                     if not document_text or len(document_text) < 50:
                         st.info("Using OCR to extract text from PDF...")
                         uploaded_file.seek(0)  # Reset file pointer
-                        if has_azure:
-                            document_text = extract_text_from_pdf_ocr(uploaded_file)
-                        else:
-                            try:
-                                # Try using alternative OCR
-                                import easyocr
-                                st.info("Using EasyOCR for text extraction...")
-                                # Convert PDF to images first
-                                from pdf2image import convert_from_bytes
-                                images = convert_from_bytes(uploaded_file.read())
-                                
-                                # Extract text from first page only to test
-                                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
-                                    images[0].save(temp_img, format='JPEG')
-                                    img_path = temp_img.name
-                                
-                                with open(img_path, 'rb') as img_file:
-                                    document_text = extract_text_using_simple_ocr(img_file)
-                                
-                                os.unlink(img_path)
-                            except ImportError:
-                                st.error("No OCR service available. Please install EasyOCR or set up Azure Computer Vision.")
-                                return
+                        document_text = extract_text_from_pdf_ocr(uploaded_file)
                 else:  # Image file
-                    if has_azure:
-                        document_text = extract_text_from_image(uploaded_file)
-                    else:
-                        try:
-                            # Try using alternative OCR
-                            document_text = extract_text_using_simple_ocr(uploaded_file)
-                        except Exception as e:
-                            st.error(f"OCR failed: {str(e)}")
-                            return
+                    document_text = extract_text_using_pytesseract(uploaded_file)
                 
                 if document_text:
                     # Show extracted raw text
@@ -393,7 +322,34 @@ def main():
                     else:
                         st.error("Failed to analyze the document.")
                 else:
-                    st.error("Could not extract text from the uploaded file. Please try another file.")
+                    st.error("Could not extract text from the uploaded file.")
+                    
+                    # Offer manual text input as fallback
+                    st.info("As a fallback, you can manually enter the text from your document.")
+                    manual_text = st.text_area("Enter document text manually:", height=150)
+                    
+                    if manual_text and st.button("Process Manual Text"):
+                        # Detect document type
+                        document_type = detect_document_type(groq_client, manual_text)
+                        st.info(f"Detected document type: {document_type} Card")
+                        
+                        # Extract information
+                        analysis = analyze_document(groq_client, manual_text, document_type)
+                        
+                        if analysis:
+                            extracted_info = parse_analysis(analysis, document_type)
+                            
+                            # Display extracted information in a nice format
+                            st.subheader("📋 Extracted Information")
+                            
+                            info_html = "<div style='background-color:#f0f2f6;padding:20px;border-radius:10px;'>"
+                            for field, value in extracted_info.items():
+                                info_html += f"<p><strong>{field}:</strong> {value}</p>"
+                            info_html += "</div>"
+                            
+                            st.markdown(info_html, unsafe_allow_html=True)
+                        else:
+                            st.error("Failed to analyze the manual text.")
     
     with tab2:
         st.subheader("Upload your document with specific type")
@@ -414,39 +370,9 @@ def main():
                     if not document_text or len(document_text) < 50:
                         st.info("Using OCR to extract text from PDF...")
                         uploaded_file.seek(0)  # Reset file pointer
-                        if has_azure:
-                            document_text = extract_text_from_pdf_ocr(uploaded_file)
-                        else:
-                            try:
-                                # Try using alternative OCR
-                                import easyocr
-                                st.info("Using EasyOCR for text extraction...")
-                                # Convert PDF to images first
-                                from pdf2image import convert_from_bytes
-                                images = convert_from_bytes(uploaded_file.read())
-                                
-                                # Extract text from first page only to test
-                                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
-                                    images[0].save(temp_img, format='JPEG')
-                                    img_path = temp_img.name
-                                
-                                with open(img_path, 'rb') as img_file:
-                                    document_text = extract_text_using_simple_ocr(img_file)
-                                
-                                os.unlink(img_path)
-                            except ImportError:
-                                st.error("No OCR service available. Please install EasyOCR or set up Azure Computer Vision.")
-                                return
+                        document_text = extract_text_from_pdf_ocr(uploaded_file)
                 else:  # Image file
-                    if has_azure:
-                        document_text = extract_text_from_image(uploaded_file)
-                    else:
-                        try:
-                            # Try using alternative OCR
-                            document_text = extract_text_using_simple_ocr(uploaded_file)
-                        except Exception as e:
-                            st.error(f"OCR failed: {str(e)}")
-                            return
+                    document_text = extract_text_using_pytesseract(uploaded_file)
                 
                 if document_text:
                     # Show extracted raw text
@@ -472,7 +398,30 @@ def main():
                     else:
                         st.error("Failed to analyze the document.")
                 else:
-                    st.error("Could not extract text from the uploaded file. Please try another file.")
+                    st.error("Could not extract text from the uploaded file.")
+                    
+                    # Offer manual text input as fallback
+                    st.info("As a fallback, you can manually enter the text from your document.")
+                    manual_text = st.text_area("Enter document text manually:", height=150)
+                    
+                    if manual_text and st.button("Process Manual Text"):
+                        # Extract information
+                        analysis = analyze_document(groq_client, manual_text, doc_type)
+                        
+                        if analysis:
+                            extracted_info = parse_analysis(analysis, doc_type)
+                            
+                            # Display extracted information in a nice format
+                            st.subheader("📋 Extracted Information")
+                            
+                            info_html = "<div style='background-color:#f0f2f6;padding:20px;border-radius:10px;'>"
+                            for field, value in extracted_info.items():
+                                info_html += f"<p><strong>{field}:</strong> {value}</p>"
+                            info_html += "</div>"
+                            
+                            st.markdown(info_html, unsafe_allow_html=True)
+                        else:
+                            st.error("Failed to analyze the manual text.")
 
     # Add information about the app
     st.markdown("---")
@@ -484,65 +433,60 @@ def main():
     **Note:** All processing is done securely, and no data is stored by this application.
     
     **Requirements:**
-    - Python packages: streamlit, groq, python-dotenv, Pillow, PyPDF2, pdf2image, requests
-    - A valid Groq API key must be set in the .env file or environment variables
-    - For optimal OCR performance, either:
-      - Azure Computer Vision API credentials
-      - EasyOCR package (pip install easyocr)
+    - Python packages: streamlit, groq, python-dotenv, Pillow, PyPDF2, pdf2image
+    - A valid Groq API key must be set in the .env file, environment variables, or entered manually
+    - For optimal OCR performance:
+      - Tesseract OCR (pip install pytesseract) and Tesseract installed on your system
+      - Or you can use the manual text input option as a fallback
     """)
     
-    # Add setup instructions for Azure Computer Vision
-    with st.expander("Azure Computer Vision Setup Instructions"):
+    # Add setup instructions for Tesseract
+    with st.expander("Tesseract OCR Setup Instructions"):
         st.markdown("""
-        ### Setting up Azure Computer Vision API
+        ### Setting up Tesseract OCR
         
-        1. **Create a Microsoft Azure account** if you don't already have one
-        2. **Create a Computer Vision resource** in the Azure portal
-        3. **Get your API key and endpoint** from the Azure portal
-        4. **Set your environment variables**:
+        Tesseract is a free and open-source OCR engine that you can install locally:
         
-        ```bash
-        # For Linux/macOS
-        export AZURE_VISION_KEY='your_api_key'
-        export AZURE_VISION_ENDPOINT='https://your-resource-name.cognitiveservices.azure.com/'
+        1. **Install Tesseract OCR on your system**:
         
-        # For Windows (Command Prompt)
-        set AZURE_VISION_KEY=your_api_key
-        set AZURE_VISION_ENDPOINT=https://your-resource-name.cognitiveservices.azure.com/
+           - **Windows**: Download and install from [https://github.com/UB-Mannheim/tesseract/wiki](https://github.com/UB-Mannheim/tesseract/wiki)
+           - **macOS**: `brew install tesseract`
+           - **Linux**: `sudo apt install tesseract-ocr`
         
-        # For Windows (PowerShell)
-        $env:AZURE_VISION_KEY='your_api_key'
-        $env:AZURE_VISION_ENDPOINT='https://your-resource-name.cognitiveservices.azure.com/'
-        ```
+        2. **Install the Python wrapper**:
         
-        You can also add these to your .env file:
+           ```bash
+           pip install pytesseract
+           ```
         
-        ```
-        AZURE_VISION_KEY=your_api_key
-        AZURE_VISION_ENDPOINT=https://your-resource-name.cognitiveservices.azure.com/
-        ```
+        3. **Make sure Tesseract is in your PATH**
         
-        For more details, visit the [Azure Computer Vision documentation](https://learn.microsoft.com/en-us/azure/cognitive-services/computer-vision/).
+           For Windows, you might need to point to the Tesseract executable:
+           
+           ```python
+           import pytesseract
+           pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
+           ```
+           
+           You can add this line to your code if needed.
         """)
     
-    # Add setup instructions for EasyOCR
-    with st.expander("EasyOCR Setup Instructions"):
+    # Add manual input instructions
+    with st.expander("Using Manual Text Input"):
         st.markdown("""
-        ### Setting up EasyOCR (Alternative to Azure)
+        ### Using Manual Text Input
         
-        If you prefer not to use Azure, you can use EasyOCR, which is a local OCR library that doesn't require API keys.
+        If automated OCR isn't working well, you can use the manual text input feature:
         
-        1. **Install EasyOCR**:
+        1. Upload your document (this allows the app to try automated extraction first)
+        2. If extraction fails, you'll see a text area where you can manually type or paste the text
+        3. Click "Process Manual Text" to analyze the text you entered
+        4. The app will then extract and display the information
         
-        ```bash
-        pip install easyocr
-        ```
-        
-        Note: EasyOCR requires PyTorch, which will be installed automatically but might take some time.
-        
-        2. **First run will download language models** (about 45MB for English)
-        
-        EasyOCR is a good alternative, but may be slower and less accurate than cloud-based OCR services.
+        This is a good fallback option when dealing with:
+        - Low-quality images
+        - Complex document layouts
+        - Cases where OCR is having difficulty
         """)
 
 if __name__ == "__main__":
