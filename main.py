@@ -9,6 +9,7 @@ from datetime import datetime
 import tempfile
 import openpyxl
 from io import BytesIO
+import time  # For timing functionality
 
 # Initialize AI client
 def initialize_groq_client():
@@ -291,6 +292,9 @@ def analyze_resume(client, resume_text, job_description):
     """
     
     try:
+        # Track time for API call
+        api_call_start = time.time()
+        
         response = client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
@@ -300,10 +304,18 @@ def analyze_resume(client, resume_text, job_description):
             temperature=0.3,  # Lower temperature for consistent analysis
             max_tokens=3500   # Increased to allow for detailed analysis
         )
+        
+        # Calculate API call time
+        api_call_time = time.time() - api_call_start
+        
         ai_response = response.choices[0].message.content
+        
+        # Add API call time to the response for later use
+        ai_response = f"API call time: {api_call_time:.2f} seconds\n\n" + ai_response
         
         # Debug info to see raw output for troubleshooting
         with st.expander("AI Analysis (Debug)", expanded=False):
+            st.write(f"API call time: {api_call_time:.2f} seconds")
             st.write(ai_response[:500] + "..." if len(ai_response) > 500 else ai_response)
             
             # Check for score mentions in the response
@@ -746,6 +758,18 @@ def main():
         - **Weak Fit (40-54) ⚠️**: Interview if candidate pool is limited
         - **Reject (0-39) ❌**: Does not meet minimum criteria
         """)
+        
+        # Add timer metrics display in sidebar
+        with st.expander("⏱️ Performance Metrics", expanded=True):
+            st.markdown("### Processing Times")
+            st.markdown("Track how long each resume takes to process:")
+            
+            # Create placeholder metrics that will be updated during processing
+            current_timer_container = st.empty()
+            api_call_timer_container = st.empty()
+            parsing_timer_container = st.empty()
+            avg_timer_container = st.empty()
+            total_timer_container = st.empty()
     
     try:
         load_dotenv()
@@ -766,23 +790,79 @@ def main():
         
         results_data = []
         
+        # Initialize timer metrics in session state
+        if 'total_processing_time' not in st.session_state:
+            st.session_state.total_processing_time = 0
+        if 'processed_count' not in st.session_state:
+            st.session_state.processed_count = 0
+        if 'total_api_time' not in st.session_state:
+            st.session_state.total_api_time = 0
+        if 'total_parsing_time' not in st.session_state:
+            st.session_state.total_parsing_time = 0
+        if 'total_extraction_time' not in st.session_state:
+            st.session_state.total_extraction_time = 0
+        
         if uploaded_files and job_description:
             if st.button("Analyze All Resumes"):
                 progress_bar = st.progress(0)
                 total_files = len(uploaded_files)
                 
+                # Start batch timing
+                batch_start_time = time.time()
+                
                 for i, uploaded_file in enumerate(uploaded_files):
                     st.subheader(f"Resume: {uploaded_file.name}")
+                    
+                    # Start timer for individual resume
+                    resume_start_time = time.time()
+                    current_timer_container.metric("⏱️ Current Resume", "Processing...")
+                    
                     with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                        # Time the PDF extraction
+                        extraction_start = time.time()
                         resume_text = extract_text_from_pdf(uploaded_file)
+                        extraction_time = time.time() - extraction_start
+                        st.session_state.total_extraction_time += extraction_time
                         
                         if resume_text:
+                            # Time the AI analysis (API call)
+                            api_call_start = time.time()
                             analysis = analyze_resume(client, resume_text, job_description)
+                            api_call_time = time.time() - api_call_start
+                            
+                            # Extract API call time from embedded data in analysis
+                            api_time_match = re.search(r'API call time: (\d+\.\d+)', analysis) if analysis else None
+                            if api_time_match:
+                                api_call_time = float(api_time_match.group(1))
+                            
+                            st.session_state.total_api_time += api_call_time
+                            api_call_timer_container.metric("⏱️ API Call", f"{api_call_time:.2f} seconds")
+                            
                             if analysis:
+                                # Time the parsing process
+                                parsing_start = time.time()
                                 parsed_data = parse_analysis(analysis, resume_text, job_description)
+                                parsing_time = time.time() - parsing_start
+                                st.session_state.total_parsing_time += parsing_time
+                                parsing_timer_container.metric("⏱️ Parsing", f"{parsing_time:.2f} seconds")
+                                
                                 if parsed_data:
                                     results_data.append(parsed_data)
-                                    st.success(f"Successfully analyzed {uploaded_file.name}")
+                                    
+                                    # Calculate and display time metrics for this resume
+                                    resume_time = time.time() - resume_start_time
+                                    st.session_state.total_processing_time += resume_time
+                                    st.session_state.processed_count += 1
+                                    
+                                    # Update timer metrics in sidebar
+                                    current_timer_container.metric("⏱️ Current Resume", f"{resume_time:.2f} seconds")
+                                    
+                                    avg_time = st.session_state.total_processing_time / st.session_state.processed_count
+                                    avg_timer_container.metric("⏱️ Average Time", f"{avg_time:.2f} seconds/resume")
+                                    total_timer_container.metric("⏱️ Total Time", f"{st.session_state.total_processing_time:.2f} seconds")
+                                    
+                                    # Success message with timing information
+                                    st.success(f"Successfully analyzed {uploaded_file.name} in {resume_time:.2f} seconds")
                                 else:
                                     st.warning(f"Could not extract structured data for {uploaded_file.name}")
                         else:
@@ -790,12 +870,48 @@ def main():
                             
                     progress_bar.progress((i + 1) / total_files)
                 
+                # Calculate and show total batch processing time
+                batch_time = time.time() - batch_start_time
                 progress_bar.progress(1.0)
+                
+                # Create detailed timing summary
+                if st.session_state.processed_count > 0:
+                    st.subheader("⏱️ Timing Summary")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Total Batch Time", f"{batch_time:.2f} seconds")
+                    with col2:
+                        avg_time = st.session_state.total_processing_time / st.session_state.processed_count
+                        st.metric("Average Resume Time", f"{avg_time:.2f} seconds")
+                    with col3:
+                        if st.session_state.total_api_time > 0:
+                            api_percentage = (st.session_state.total_api_time / st.session_state.total_processing_time) * 100
+                            st.metric("API Call Percentage", f"{api_percentage:.1f}%")
+                    
+                    st.info(f"✅ Batch processing complete! Total time: {batch_time:.2f} seconds for {len(uploaded_files)} resumes")
+                    
+                    # Add detailed timing breakdown
+                    with st.expander("See detailed timing breakdown", expanded=False):
+                        timing_df = pd.DataFrame({
+                            "Component": ["API Calls", "PDF Extraction", "Parsing", "Other"],
+                            "Total Time (sec)": [
+                                round(st.session_state.total_api_time, 2),
+                                round(st.session_state.total_extraction_time, 2),
+                                round(st.session_state.total_parsing_time, 2),
+                                round(st.session_state.total_processing_time - st.session_state.total_api_time - 
+                                      st.session_state.total_parsing_time - st.session_state.total_extraction_time, 2)
+                            ]
+                        })
+                        timing_df["Percentage"] = (timing_df["Total Time (sec)"] / st.session_state.total_processing_time * 100).round(1).astype(str) + '%'
+                        st.table(timing_df)
         
         if results_data:
             st.subheader("Analysis Results")
             
             try:
+                # Time the dataframe and results creation
+                results_start_time = time.time()
+                
                 # Create DataFrame with the extracted data
                 df = pd.DataFrame(results_data)
                 
@@ -817,6 +933,8 @@ def main():
                     st.warning("No columns to display. Please check the AI response format.")
                     st.write("DataFrame columns:", df.columns.tolist())
                 
+                results_time = time.time() - results_start_time
+                
                 # For the Excel export, we want all columns
                 export_columns = [
                     "Candidate Name", "Total Experience (Years)", 
@@ -834,6 +952,7 @@ def main():
                 available_export_columns = [col for col in export_columns if col in df.columns]
                 
                 with st.spinner("Preparing Excel file..."):
+                    excel_start_time = time.time()
                     try:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
                             # Make sure we're saving the dataframe with all available columns
@@ -854,7 +973,8 @@ def main():
                             wb.save(tmpfile.name)
                             tmpfile_path = tmpfile.name
                         
-                        st.success("Excel report ready!")
+                        excel_time = time.time() - excel_start_time
+                        st.success(f"Excel report ready! (Prepared in {excel_time:.2f} seconds)")
                         
                         with open(tmpfile_path, "rb") as file:
                             file_data = file.read()
