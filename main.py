@@ -12,7 +12,11 @@ from io import BytesIO
 
 # Initialize AI client
 def initialize_groq_client():
-    return Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    try:
+        return Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    except Exception as e:
+        st.error(f"Failed to initialize Groq client: {str(e)}")
+        return None
 
 # Extract text from PDF
 def extract_text_from_pdf(pdf_file):
@@ -73,21 +77,17 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         scores = {}
         
         # Strong Matches Score - Now directly from the AI's analysis of exact skill matches
-        if parsed_data["Strong Matches Score"] != "Not Available":
-            try:
-                scores["strong_matches"] = float(parsed_data["Strong Matches Score"])
-            except ValueError:
-                scores["strong_matches"] = 0
-        else:
+        strong_matches_val = parsed_data.get("Strong Matches Score", "0")
+        try:
+            scores["strong_matches"] = float(strong_matches_val)
+        except (ValueError, TypeError):
             scores["strong_matches"] = 0
             
         # Partial Matches Score - Now directly from the AI's analysis of related skills
-        if parsed_data["Partial Matches Score"] != "Not Available":
-            try:
-                scores["partial_matches"] = float(parsed_data["Partial Matches Score"])
-            except ValueError:
-                scores["partial_matches"] = 0
-        else:
+        partial_matches_val = parsed_data.get("Partial Matches Score", "0")
+        try:
+            scores["partial_matches"] = float(partial_matches_val)
+        except (ValueError, TypeError):
             scores["partial_matches"] = 0
             
         # Calculate relevancy score as a weighted sum of strong and partial matches
@@ -98,54 +98,54 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         # Final relevancy score is the sum of weighted strong and partial matches
         scores["relevancy"] = min(weighted_strong + weighted_partial, 100)
         
+        # Update the parsed data with our calculated relevancy score
+        parsed_data["Relevancy Score (0-100)"] = str(round(scores["relevancy"], 1))
+        
         # Experience calculation - based on required years
-        if parsed_data["Total Experience (Years)"] != "Not Available":
-            try:
-                candidate_exp = float(parsed_data["Total Experience (Years)"])
-                # More nuanced experience score:
-                # - Below required: proportional score up to 70%
-                # - At required: 80%
-                # - Above required: bonus points up to 100%
-                if candidate_exp < required_experience:
-                    scores["experience"] = min((candidate_exp / required_experience) * 70, 70)
-                elif candidate_exp == required_experience:
-                    scores["experience"] = 80
-                else:
-                    # Additional experience gives bonus points, with diminishing returns
-                    bonus = min(((candidate_exp - required_experience) / 2) * 20, 20)
-                    scores["experience"] = 80 + bonus
-            except ValueError:
-                scores["experience"] = 0
-        else:
+        experience_val = parsed_data.get("Total Experience (Years)", "0")
+        try:
+            candidate_exp = float(experience_val)
+            # More nuanced experience score:
+            # - Below required: proportional score up to 70%
+            # - At required: 80%
+            # - Above required: bonus points up to 100%
+            if candidate_exp < required_experience:
+                scores["experience"] = min((candidate_exp / required_experience) * 70, 70)
+            elif candidate_exp == required_experience:
+                scores["experience"] = 80
+            else:
+                # Additional experience gives bonus points, with diminishing returns
+                bonus = min(((candidate_exp - required_experience) / 2) * 20, 20)
+                scores["experience"] = 80 + bonus
+        except (ValueError, TypeError):
             scores["experience"] = 0
             
         # Job stability - how long candidates typically stay at jobs
-        if parsed_data["Job Stability"] != "Not Available":
-            try:
-                job_stability = float(parsed_data["Job Stability"])
-                if job_stability <= 10:  # If rated on 1-10 scale
-                    scores["stability"] = job_stability * 10  # Convert to 100-point scale
-                else:  # If provided as average years
-                    # Convert years to score: 
-                    # - Less than 1 year: proportional score up to 50
-                    # - 1-2 years: 50-85
-                    # - 2+ years: 85-100
-                    if job_stability < 1:
-                        scores["stability"] = (job_stability * 50)
-                    elif job_stability < 2:
-                        scores["stability"] = 50 + ((job_stability - 1) * 35)
-                    else:
-                        scores["stability"] = 85 + min(((job_stability - 2) * 7.5), 15)
-            except ValueError:
-                scores["stability"] = 0
-        else:
+        stability_val = parsed_data.get("Job Stability", "0")
+        try:
+            job_stability = float(stability_val)
+            if job_stability <= 10:  # If rated on 1-10 scale
+                scores["stability"] = job_stability * 10  # Convert to 100-point scale
+            else:  # If provided as average years
+                # Convert years to score: 
+                # - Less than 1 year: proportional score up to 50
+                # - 1-2 years: 50-85
+                # - 2+ years: 85-100
+                if job_stability < 1:
+                    scores["stability"] = (job_stability * 50)
+                elif job_stability < 2:
+                    scores["stability"] = 50 + ((job_stability - 1) * 35)
+                else:
+                    scores["stability"] = 85 + min(((job_stability - 2) * 7.5), 15)
+        except (ValueError, TypeError):
             scores["stability"] = 0
             
         # College rating score
-        if parsed_data["College Rating"] != "Not Available":
-            if "premium" in parsed_data["College Rating"].lower() and "non" not in parsed_data["College Rating"].lower():
+        college_rating = parsed_data.get("College Rating", "")
+        if college_rating:
+            if "premium" in college_rating.lower() and "non" not in college_rating.lower():
                 scores["college"] = 100
-            elif "non-premium" in parsed_data["College Rating"].lower():
+            elif "non-premium" in college_rating.lower():
                 scores["college"] = 70
             else:
                 scores["college"] = 40
@@ -153,16 +153,17 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
             scores["college"] = 20
             
         # Leadership score - binary based on presence of leadership experience
-        if parsed_data["Leadership Skills"] != "Not Available":
+        leadership_skills = parsed_data.get("Leadership Skills", "")
+        if leadership_skills:
             leadership_keywords = ["led", "managed", "directed", "leadership", "head", "team lead", 
                                 "supervisor", "manager", "chief", "director", "lead"]
             
-            if any(word in parsed_data["Leadership Skills"].lower() for word in leadership_keywords):
+            if any(word in leadership_skills.lower() for word in leadership_keywords):
                 scores["leadership"] = 100
             else:
                 # Check for partial leadership indicators
                 partial_leadership = ["coordinated", "facilitated", "organized", "spearheaded", "guided"]
-                if any(word in parsed_data["Leadership Skills"].lower() for word in partial_leadership):
+                if any(word in leadership_skills.lower() for word in partial_leadership):
                     scores["leadership"] = 50
                 else:
                     scores["leadership"] = 0
@@ -170,14 +171,15 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
             scores["leadership"] = 0
             
         # International experience score
-        if parsed_data["International Team Experience"] != "Not Available":
+        international_exp = parsed_data.get("International Team Experience", "")
+        if international_exp:
             international_keywords = ["yes", "international", "global", "worldwide", "multinational", 
                                     "cross-border", "overseas", "remote teams", "offshore"]
             
-            if any(word in parsed_data["International Team Experience"].lower() for word in international_keywords):
+            if any(word in international_exp.lower() for word in international_keywords):
                 # Look for deeper international experience
                 deep_int_exp = ["led international", "managed global", "cross-cultural", "multiple countries"]
-                if any(phrase in parsed_data["International Team Experience"].lower() for phrase in deep_int_exp):
+                if any(phrase in international_exp.lower() for phrase in deep_int_exp):
                     scores["international"] = 100
                 else:
                     scores["international"] = 80
@@ -187,28 +189,26 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
             scores["international"] = 0
             
         # Competitor experience score - more nuanced based on specific competitors
-        if parsed_data["Competitor Experience"] != "Not Available":
-            if parsed_data["Competitor Experience"].lower().startswith("yes"):
-                # Premium competitors get higher scores
-                premium_competitors = ["anaplan", "workday", "oracle", "sap", "onestream"]
-                if any(comp in parsed_data["Competitor Experience"].lower() for comp in premium_competitors):
-                    scores["competitor"] = 100
-                else:
-                    scores["competitor"] = 70
+        competitor_exp = parsed_data.get("Competitor Experience", "")
+        if competitor_exp and competitor_exp.lower().startswith("yes"):
+            # Premium competitors get higher scores
+            premium_competitors = ["anaplan", "workday", "oracle", "sap", "onestream"]
+            if any(comp in competitor_exp.lower() for comp in premium_competitors):
+                scores["competitor"] = 100
             else:
-                scores["competitor"] = 0
+                scores["competitor"] = 70
         else:
             scores["competitor"] = 0
             
         # Calculate weighted overall score with adjusted weights
         overall_score = (
             (0.40 * scores["relevancy"]) +        # Skills relevancy is most important
-            (0.15 * scores["experience"]) +        # Years of experience
-            (0.12 * scores["stability"]) +         # Job stability slightly more important
-            (0.10 * scores["college"]) +           # Education background
-            (0.10 * scores["leadership"]) +        # Leadership abilities
-            (0.08 * scores["international"]) +     # International experience slightly less weight
-            (0.05 * scores["competitor"])          # Competitor experience
+            (0.15 * scores["experience"]) +       # Years of experience
+            (0.12 * scores["stability"]) +        # Job stability slightly more important
+            (0.10 * scores["college"]) +          # Education background
+            (0.10 * scores["leadership"]) +       # Leadership abilities
+            (0.08 * scores["international"]) +    # International experience slightly less weight
+            (0.05 * scores["competitor"])         # Competitor experience
         )
         
         # Enhanced recommendation categories
@@ -233,33 +233,37 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
 
 # Call AI model to analyze resume with enhanced evaluation focus on skills matching
 def analyze_resume(client, resume_text, job_description):
+    if not client:
+        return None
+        
     competitors = get_planful_competitors()
     competitors_list = ", ".join(competitors)
     
     prompt = f"""
-    As an expert HR consultant and resume analyzer, carefully review the following resume against the job description.
-    Focus on precise skills matching between the job requirements and candidate qualifications.
+    As an expert HR consultant analyzing this resume against the job description, extract the following information with special attention to skills matching.
     
-    Provide a structured analysis with EXACT labeled fields as follows:
+    First, extract ALL important keywords and required skills from the job description.
+    
+    Then, provide a structured analysis with EXACTLY these labeled fields:
     
     Candidate Name: [Extract full name]
     Total Experience (Years): [Calculate years from earliest job to latest]
     
-    Strong Matches Score (0-100): [Score ONLY for EXACT skill/requirement matches between the job description and resume]
-    Strong Matches Reasoning: [List all exact matches, be specific (e.g., "AWS required in JD and candidate has 3 years AWS experience")]
+    Strong Matches Score (0-100): [Score ONLY for EXACT keyword/skill matches between the job description and resume. If a skill in the JD exactly appears in the resume, it's a strong match.]
+    Strong Matches Reasoning: [List specific EXACT skill matches with explanation (e.g., "Python: Required in JD and candidate has 3 years Python experience")]
     
-    Partial Matches Score (0-100): [Score for RELATED but not exact skills (e.g., JD requires AWS but candidate has GCP experience)]
-    Partial Matches Reasoning: [List all partial/transferable skill matches with clear explanations]
+    Partial Matches Score (0-100): [Score for RELATED but NOT exact skills (e.g., JD requires Tableau but candidate has PowerBI experience)]
+    Partial Matches Reasoning: [List all partial/transferable skill matches with explanations (e.g., "PowerBI instead of required Tableau - transferable data visualization skill")]
     
     Relevancy Score (0-100): [This should be a weighted calculation: 70% of Strong Matches + 30% of Partial Matches]
     
-    All Tech Skills: [List ALL technical skills]
+    All Tech Skills: [List ALL technical skills from resume]
     Relevant Tech Skills: [List only skills relevant to job]
     Degree: [Highest degree only]
     College/University: [Institution name]
     Job Applying For: [Extract Job ID from job description]
     College Rating: [Rate as "Premium" or "Non-Premium"]
-    Job Stability: [Rate 1-10, give 10 if ≥2 years per job]
+    Job Stability: [Rate 1-10, with 10 for ≥2 years per job]
     Latest Company: [Most recent employer]
     Leadership Skills: [Describe leadership experience in detail]
     International Team Experience: [Yes/No + details about working with global teams]
@@ -267,9 +271,9 @@ def analyze_resume(client, resume_text, job_description):
     LinkedIn URL: [Extract LinkedIn profile URL if present]
     Portfolio URL: [Extract any portfolio, GitHub, or personal website URL if present]
     Work History: [List all previous companies and roles]
-    Competitor Experience: [Yes/No. Check if resume mentions experience at any of these companies: {competitors_list}]
+    Competitor Experience: [ONLY say "Yes - [Competitor Name]" if they worked at any of these companies: {competitors_list}. Otherwise leave completely blank.]
     
-    Use EXACTLY these field labels in your response, followed by your analysis.
+    VERY IMPORTANT: Make sure to assign actual numeric values for "Strong Matches Score" and "Partial Matches Score" - they must be numbers between 0-100.
     
     Resume:
     {resume_text}
@@ -285,7 +289,7 @@ def analyze_resume(client, resume_text, job_description):
                 {"role": "system", "content": "You are an expert HR consultant specializing in resume analysis. Your task is to extract and analyze key information from resumes against job descriptions, with special focus on accurate skills matching. Format your response as a list of key-value pairs."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,  # Lower temperature for more consistent responses
+            temperature=0.2,  # Lower temperature for more consistent responses
             max_tokens=3000
         )
         ai_response = response.choices[0].message.content
@@ -312,20 +316,23 @@ def clean_text(text):
     
     return text.strip()
 
-# Check for competitor mentions in work history
+# Check for competitor mentions in work history - returns "" if no match
 def check_competitor_experience(work_history, competitor_list):
     if not work_history or work_history == "Not Available":
-        return "No"
+        return ""
     
     for competitor in competitor_list:
         if competitor.lower() in work_history.lower():
             return f"Yes - {competitor}"
     
-    return "No"
+    return ""
 
 # Parse AI response with improved extraction logic
 def parse_analysis(analysis, resume_text=None):
     try:
+        if not analysis:
+            return None
+            
         # Definition of expected fields with exact matches and alternative formats
         expected_fields = {
             "Candidate Name": ["candidate name", "candidate's name", "name"],
@@ -420,6 +427,15 @@ def parse_analysis(analysis, resume_text=None):
                 if matches:
                     result["Job Stability"] = matches.group(1)
         
+        # Ensure Strong and Partial Match scores are available and numeric
+        if result["Strong Matches Score"] == "Not Available" or not re.match(r'^\d+(?:\.\d+)?$', result["Strong Matches Score"]):
+            # Default to 0 if not available or not numeric
+            result["Strong Matches Score"] = "0"
+            
+        if result["Partial Matches Score"] == "Not Available" or not re.match(r'^\d+(?:\.\d+)?$', result["Partial Matches Score"]):
+            # Default to 0 if not available or not numeric
+            result["Partial Matches Score"] = "0"
+        
         # Normalize College Rating
         if result["College Rating"] != "Not Available":
             if "premium" in result["College Rating"].lower():
@@ -462,9 +478,23 @@ def parse_analysis(analysis, resume_text=None):
         if result["Work History"] == "Not Available" and "Latest Company" in result and result["Latest Company"] != "Not Available":
             result["Work History"] = result["Latest Company"]
 
-        # Double-check Competitor Experience with work history
-        if result["Competitor Experience"] == "Not Available" or not any(word in result["Competitor Experience"].lower() for word in ["yes", "no"]):
+        # Handle Competitor Experience - should be blank (empty string) when no match found
+        if result["Competitor Experience"] == "Not Available" or not result["Competitor Experience"]:
+            # Check work history for competitor names
             result["Competitor Experience"] = check_competitor_experience(result["Work History"], get_planful_competitors())
+        elif "no" in result["Competitor Experience"].lower() or "not" in result["Competitor Experience"].lower():
+            # If explicitly states no, then make it empty
+            result["Competitor Experience"] = ""
+        elif not result["Competitor Experience"].lower().startswith("yes"):
+            # If doesn't start with "Yes" but has content, check if it's a competitor name
+            competitor_found = False
+            for competitor in get_planful_competitors():
+                if competitor.lower() in result["Competitor Experience"].lower():
+                    result["Competitor Experience"] = f"Yes - {competitor}"
+                    competitor_found = True
+                    break
+            if not competitor_found:
+                result["Competitor Experience"] = ""
             
         # Clean all text fields
         for field in result:
@@ -490,101 +520,124 @@ def parse_analysis(analysis, resume_text=None):
 
 # Format Excel with styling and organization
 def format_excel_workbook(wb, columns):
-    ws = wb.active
-    
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    
-    header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
-    header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
-    header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    
-    normal_font = Font(name='Calibri', size=11)
-    normal_alignment = Alignment(vertical='center', wrap_text=True)
-    
-    score_alignment = Alignment(horizontal='center', vertical='center')
-    
-    url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
-    
-    competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
-    
-    thin_border = Border(
-        left=Side(style='thin'),
-        right=Side(style='thin'),
-        top=Side(style='thin'),
-        bottom=Side(style='thin')
-    )
-    
-    for col_num, column in enumerate(columns, 1):
-        cell = ws.cell(row=1, column=col_num)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-        cell.border = thin_border
-    
-    for row in range(2, ws.max_row + 1):
-        for col in range(1, ws.max_column + 1):
-            cell = ws.cell(row=row, column=col)
-            cell.font = normal_font
-            cell.alignment = normal_alignment
+    try:
+        ws = wb.active
+        
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        
+        header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        
+        normal_font = Font(name='Calibri', size=11)
+        normal_alignment = Alignment(vertical='center', wrap_text=True)
+        
+        score_alignment = Alignment(horizontal='center', vertical='center')
+        
+        url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
+        
+        competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
+        
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Apply formatting to headers
+        for col_num, column in enumerate(columns, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
             cell.border = thin_border
-            
-            column_name = columns[col-1]
-            if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
-                cell.alignment = score_alignment
+        
+        # Apply formatting to data cells
+        max_row = ws.max_row if ws.max_row else 1  # Protect against empty worksheet
+        max_col = ws.max_column if ws.max_column else 1
+        
+        for row in range(2, max_row + 1):
+            for col in range(1, max_col + 1):
+                cell = ws.cell(row=row, column=col)
+                if not cell.value:  # Skip empty cells
+                    continue
+                    
+                cell.font = normal_font
+                cell.alignment = normal_alignment
+                cell.border = thin_border
                 
-                if cell.value not in ["Not Available", None, ""]:
-                    try:
-                        if any(term in column_name for term in ["Score", "Job Stability"]):
-                            score_value = float(cell.value)
-                            if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
-                                cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                            elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
-                                cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                            else:
-                                cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
-                    except (ValueError, TypeError):
-                        pass
-            
-            if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
-                if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
-                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                elif "non-premium" in str(cell.value).lower():
-                    cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-            
-            if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
-                if "Strong Fit" in str(cell.value) or "Good Fit" in str(cell.value):
-                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                elif "Consider" in str(cell.value):
-                    cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                elif "Weak Fit" in str(cell.value):
-                    cell.fill = PatternFill(start_color='FFD700', end_color='FFD700', fill_type='solid')  # Orange
-                elif "Reject" in str(cell.value):
-                    cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
-            
-            if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
-                cell.font = url_font
-                cell.hyperlink = cell.value
-            
-            if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
-                if cell.value.lower().startswith("yes"):
-                    cell.font = competitor_yes_font
-                    cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
-    
-    for col_num, column in enumerate(columns, 1):
-        column_letter = openpyxl.utils.get_column_letter(col_num)
-        if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
-            ws.column_dimensions[column_letter].width = 40
-        elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
-            ws.column_dimensions[column_letter].width = 30
-        else:
-            ws.column_dimensions[column_letter].width = 18
-    
-    ws.freeze_panes = "A2"
-    
-    return wb
+                if col <= len(columns):  # Ensure we don't go out of bounds
+                    column_name = columns[col-1]
+                    
+                    if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
+                        cell.alignment = score_alignment
+                        
+                        if cell.value not in ["Not Available", None, ""]:
+                            try:
+                                if any(term in column_name for term in ["Score", "Job Stability"]):
+                                    score_value = float(cell.value)
+                                    if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
+                                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                                    elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
+                                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                                    else:
+                                        cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
+                        if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
+                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                        elif "non-premium" in str(cell.value).lower():
+                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                    
+                    if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
+                        if "Strong Fit" in str(cell.value) or "Good Fit" in str(cell.value):
+                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                        elif "Consider" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                        elif "Weak Fit" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFD700', end_color='FFD700', fill_type='solid')  # Orange
+                        elif "Reject" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                    
+                    if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
+                        cell.font = url_font
+                        try:
+                            cell.hyperlink = cell.value
+                        except Exception:
+                            # Fallback if hyperlink fails
+                            pass
+                    
+                    if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
+                        if str(cell.value).lower().startswith("yes"):
+                            cell.font = competitor_yes_font
+                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
+        
+        # Set column widths
+        for col_num, column in enumerate(columns, 1):
+            column_letter = openpyxl.utils.get_column_letter(col_num)
+            if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
+                ws.column_dimensions[column_letter].width = 40
+            elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
+                ws.column_dimensions[column_letter].width = 30
+            else:
+                ws.column_dimensions[column_letter].width = 18
+        
+        # Freeze the top row
+        ws.freeze_panes = "A2"
+        
+        return wb
+    except Exception as e:
+        st.error(f"Error formatting Excel: {str(e)}")
+        # Return the unformatted workbook as fallback
+        return wb
 
 # Main Streamlit App
 def main():
+    st.set_page_config(page_title="Resume Analyzer", layout="wide", initial_sidebar_state="expanded")
+    
     st.title("📝 Enhanced Resume Analyzer")
     st.markdown("Built with AI-powered skill matching and scoring")
     
@@ -600,6 +653,12 @@ def main():
         - 8% × International Experience
         - 5% × Competitor Experience
         
+        ### Score Explanations
+        - **Strong Matches**: Exact matching skills found in both JD and resume
+        - **Partial Matches**: Related but different skills (e.g., PowerBI instead of Tableau)
+        - **Relevancy Score**: Weighted combination of Strong (70%) and Partial (30%) matches
+        - **Overall Weighted Score**: Combines relevancy with other factors using weights above
+        
         ### Selection Categories
         - **Strong Fit (85-100) ✅**: Priority interview
         - **Good Fit (70-84) ✅**: Recommend interview
@@ -608,115 +667,136 @@ def main():
         - **Reject (0-39) ❌**: Does not meet minimum criteria
         """)
     
-    load_dotenv()
-    
-    if not os.environ.get("GROQ_API_KEY"):
-        st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
-        return
+    try:
+        load_dotenv()
         
-    client = initialize_groq_client()
-    uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
-    job_description = st.text_area("Paste the job description here", height=200)
-    
-    results_data = []
-    
-    if uploaded_files and job_description:
-        if st.button("Analyze All Resumes"):
-            progress_bar = st.progress(0)
-            total_files = len(uploaded_files)
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
+            st.info("You can get an API key from https://console.groq.com/")
+            return
             
-            for i, uploaded_file in enumerate(uploaded_files):
-                st.subheader(f"Resume: {uploaded_file.name}")
-                with st.spinner(f"Analyzing {uploaded_file.name}..."):
-                    resume_text = extract_text_from_pdf(uploaded_file)
-                    
-                    if resume_text:
-                        analysis = analyze_resume(client, resume_text, job_description)
-                        if analysis:
-                            parsed_data = parse_analysis(analysis, resume_text)
-                            if parsed_data:
-                                results_data.append(parsed_data)
-                                st.success(f"Successfully analyzed {uploaded_file.name}")
-                            else:
-                                st.warning(f"Could not extract structured data for {uploaded_file.name}")
-                    else:
-                        st.error(f"Could not extract text from {uploaded_file.name}")
+        client = initialize_groq_client()
+        if not client:
+            st.error("Failed to initialize Groq client. Please check your API key.")
+            return
+            
+        uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
+        job_description = st.text_area("Paste the job description here", height=200)
+        
+        results_data = []
+        
+        if uploaded_files and job_description:
+            if st.button("Analyze All Resumes"):
+                progress_bar = st.progress(0)
+                total_files = len(uploaded_files)
+                
+                for i, uploaded_file in enumerate(uploaded_files):
+                    st.subheader(f"Resume: {uploaded_file.name}")
+                    with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                        resume_text = extract_text_from_pdf(uploaded_file)
                         
-                progress_bar.progress((i + 1) / total_files)
+                        if resume_text:
+                            analysis = analyze_resume(client, resume_text, job_description)
+                            if analysis:
+                                parsed_data = parse_analysis(analysis, resume_text)
+                                if parsed_data:
+                                    results_data.append(parsed_data)
+                                    st.success(f"Successfully analyzed {uploaded_file.name}")
+                                else:
+                                    st.warning(f"Could not extract structured data for {uploaded_file.name}")
+                        else:
+                            st.error(f"Could not extract text from {uploaded_file.name}")
+                            
+                    progress_bar.progress((i + 1) / total_files)
+                
+                progress_bar.progress(1.0)
+        
+        if results_data:
+            st.subheader("Analysis Results")
             
-            progress_bar.progress(1.0)
-    
-    if results_data:
-        st.subheader("Analysis Results")
-        
-        # Create DataFrame with the extracted data
-        df = pd.DataFrame(results_data)
-        
-        # Define the key columns for display in the UI
-        display_columns = [
-            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
-            "Strong Matches Score", "Partial Matches Score", "Overall Weighted Score",
-            "College Rating", "Job Stability", "Latest Company",
-            "Leadership Skills", "International Team Experience",
-            "Competitor Experience", "Selection Recommendation"
-        ]
-        
-        # Show all columns that exist in our dataframe
-        available_columns = [col for col in display_columns if col in df.columns]
-        
-        if available_columns:
-            st.dataframe(df[available_columns])
-        else:
-            st.warning("No columns to display. Please check the AI response format.")
-            st.write("DataFrame columns:", df.columns.tolist())
-        
-        # For the Excel export, we want all columns
-        export_columns = [
-            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
-            "Strong Matches Score", "Strong Matches Reasoning", "Partial Matches Score",
-            "Partial Matches Reasoning", "All Tech Skills", "Relevant Tech Skills",
-            "Degree", "College/University", "Job Applying For", "College Rating", 
-            "Job Stability", "Latest Company", "Leadership Skills", 
-            "International Team Experience", "Notice Period", "LinkedIn URL", 
-            "Portfolio URL", "Work History", "Competitor Experience",
-            "Overall Weighted Score", "Selection Recommendation"
-        ]
-        
-        # Available export columns
-        available_export_columns = [col for col in export_columns if col in df.columns]
-        
-        with st.spinner("Preparing Excel file..."):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
-                # Make sure we're saving the dataframe with all available columns
-                if available_export_columns:
-                    export_df = df[available_export_columns]
+            try:
+                # Create DataFrame with the extracted data
+                df = pd.DataFrame(results_data)
+                
+                # Define the key columns for display in the UI
+                display_columns = [
+                    "Candidate Name", "Total Experience (Years)", "Strong Matches Score", 
+                    "Partial Matches Score", "Relevancy Score (0-100)", "Overall Weighted Score",
+                    "College Rating", "Job Stability", "Latest Company",
+                    "Leadership Skills", "International Team Experience",
+                    "Competitor Experience", "Selection Recommendation"
+                ]
+                
+                # Show all columns that exist in our dataframe
+                available_columns = [col for col in display_columns if col in df.columns]
+                
+                if available_columns:
+                    st.dataframe(df[available_columns])
                 else:
-                    export_df = df  # Use all columns if our expected ones aren't found
+                    st.warning("No columns to display. Please check the AI response format.")
+                    st.write("DataFrame columns:", df.columns.tolist())
                 
-                export_df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
-                wb = openpyxl.load_workbook(tmpfile.name)
+                # For the Excel export, we want all columns
+                export_columns = [
+                    "Candidate Name", "Total Experience (Years)", 
+                    "Strong Matches Score", "Strong Matches Reasoning", 
+                    "Partial Matches Score", "Partial Matches Reasoning", 
+                    "Relevancy Score (0-100)", "All Tech Skills", "Relevant Tech Skills",
+                    "Degree", "College/University", "Job Applying For", "College Rating", 
+                    "Job Stability", "Latest Company", "Leadership Skills", 
+                    "International Team Experience", "Notice Period", "LinkedIn URL", 
+                    "Portfolio URL", "Work History", "Competitor Experience",
+                    "Overall Weighted Score", "Selection Recommendation"
+                ]
                 
-                if available_export_columns:
-                    wb = format_excel_workbook(wb, available_export_columns)
-                else:
-                    # If no expected columns, use whatever columns are in the dataframe
-                    wb = format_excel_workbook(wb, df.columns.tolist())
+                # Available export columns
+                available_export_columns = [col for col in export_columns if col in df.columns]
                 
-                wb.save(tmpfile.name)
-                tmpfile_path = tmpfile.name
-            
-            st.success("Excel report ready!")
-            
-            with open(tmpfile_path, "rb") as file:
-                file_data = file.read()
-                st.download_button(
-                    label="📥 Download Complete Resume Analysis Report",
-                    data=file_data,
-                    file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                with st.spinner("Preparing Excel file..."):
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
+                            # Make sure we're saving the dataframe with all available columns
+                            if available_export_columns:
+                                export_df = df[available_export_columns]
+                            else:
+                                export_df = df  # Use all columns if our expected ones aren't found
+                            
+                            export_df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
+                            wb = openpyxl.load_workbook(tmpfile.name)
+                            
+                            if available_export_columns:
+                                wb = format_excel_workbook(wb, available_export_columns)
+                            else:
+                                # If no expected columns, use whatever columns are in the dataframe
+                                wb = format_excel_workbook(wb, df.columns.tolist())
+                            
+                            wb.save(tmpfile.name)
+                            tmpfile_path = tmpfile.name
+                        
+                        st.success("Excel report ready!")
+                        
+                        with open(tmpfile_path, "rb") as file:
+                            file_data = file.read()
+                            st.download_button(
+                                label="📥 Download Complete Resume Analysis Report",
+                                data=file_data,
+                                file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
 
-            os.unlink(tmpfile_path)
+                        os.unlink(tmpfile_path)
+                    except Exception as e:
+                        st.error(f"Error creating Excel file: {str(e)}")
+                        st.info("You can still see the results in the table above.")
+            except Exception as e:
+                st.error(f"Error processing results: {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
