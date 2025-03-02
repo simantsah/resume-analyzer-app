@@ -456,7 +456,16 @@ def parse_analysis(analysis, resume_text=None):
         result["Overall Weighted Score"] = str(round(overall_score, 2))
         result["Selection Recommendation"] = recommendation
         
-        # FIX: Instead of converting to list, return the dictionary directly
+        with st.expander("Extracted Data (Debugging)"):
+            st.write("### Extracted Fields")
+            for k, v in result.items():
+                st.write(f"{k}: {v}")
+                
+            st.write("### Individual Scores")
+            for k, v in individual_scores.items():
+                st.write(f"{k}: {round(v, 2)}")
+        
+        # Return the entire result dictionary
         return result
     
     except Exception as e:
@@ -626,34 +635,42 @@ def main():
     if results_data:
         st.subheader("Analysis Results")
         
-        # FIX: Create DataFrame directly from the list of dictionaries
+        # Create DataFrame with the extracted data
         df = pd.DataFrame(results_data)
         
-        # Define the expected columns for display
+        # Define the expected columns - all columns should now be available
         display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
-            "Job Applying For", "College Rating", "Job Stability", "Latest Company",
-            "LinkedIn URL", "Portfolio URL", "Overall Weighted Score", "Selection Recommendation"
+            "Strong Matches Score", "Strong Matches Reasoning", "Partial Matches Score",
+            "Partial Matches Reasoning", "All Tech Skills", "Relevant Tech Skills",
+            "Degree", "College/University", "Job Applying For", "College Rating", 
+            "Job Stability", "Latest Company", "Leadership Skills", 
+            "International Team Experience", "Notice Period", "LinkedIn URL", 
+            "Portfolio URL", "Work History", "Competitor Experience",
+            "Overall Weighted Score", "Selection Recommendation"
         ]
         
-        # Filter to only show columns that exist in our dataframe
-        display_columns = [col for col in display_columns if col in df.columns]
+        # Show all columns that exist in our dataframe
+        available_columns = [col for col in display_columns if col in df.columns]
         
-        if not display_columns:
-            st.warning("No columns to display. Check that the AI response contains the expected fields.")
+        if available_columns:
+            st.dataframe(df[available_columns])
         else:
-            st.dataframe(df[display_columns])
+            st.warning("No columns to display. Debug info:")
+            st.write("DataFrame columns:", df.columns.tolist())
+            st.write("Expected columns:", display_columns)
         
         with st.spinner("Preparing Excel file..."):
-            # Use all available columns for the Excel export
-            excel_columns = df.columns.tolist()
-            
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
+                # Make sure we're saving the dataframe as is, with all columns
                 df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
                 wb = openpyxl.load_workbook(tmpfile.name)
                 
-                # Format the Excel workbook with all available columns
-                wb = format_excel_workbook(wb, excel_columns)
+                if available_columns:
+                    wb = format_excel_workbook(wb, available_columns)
+                else:
+                    # If no display columns, use whatever columns are in the dataframe
+                    wb = format_excel_workbook(wb, df.columns.tolist())
                 
                 wb.save(tmpfile.name)
                 tmpfile_path = tmpfile.name
@@ -670,3 +687,6 @@ def main():
                 )
 
             os.unlink(tmpfile_path)
+
+if __name__ == "__main__":
+    main()
