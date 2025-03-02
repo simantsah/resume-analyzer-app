@@ -3,19 +3,18 @@ from groq import Groq
 import PyPDF2
 import os
 import re
+import pandas as pd
 from dotenv import load_dotenv
-import io
-from PIL import Image
-import requests
+from datetime import datetime
 import tempfile
-import json
-from pdf2image import convert_from_bytes
+import openpyxl
+from io import BytesIO
 
 # Initialize AI client
 def initialize_groq_client():
     return Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-# Extract text from PDF using PyPDF2 (for text-based PDFs)
+# Extract text from PDF
 def extract_text_from_pdf(pdf_file):
     try:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -25,557 +24,665 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error extracting text from PDF: {str(e)}")
         return None
 
-# Enhanced OCR using pytesseract with improved preprocessing
-def extract_text_using_pytesseract(image_file):
+# Define Planful competitors
+def get_planful_competitors():
+    return [
+        "Anaplan", "Workday Adaptive Planning", "Oracle EPM", "Oracle Hyperion", 
+        "SAP BPC", "IBM Planning Analytics", "TM1", "Prophix", "Vena Solutions", 
+        "Jedox", "OneStream", "Board", "Centage", "Solver", "Kepion", "Host Analytics",
+        "CCH Tagetik", "Infor CPM", "Syntellis", "Longview"
+    ]
+
+# Extract LinkedIn URL directly from resume text
+def extract_linkedin_url(text):
+    if not text:
+        return ""
+    
+    patterns = [
+        r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'www\.linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'linkedin:\s*https?://(?:www\.)?linkedin\.com/in/[\w-]+',
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        if matches:
+            url = matches[0]
+            if not url.startswith('http'):
+                url = 'https://' + ('' if url.startswith('www.') or url.startswith('linkedin.com') else 'www.') + url
+                if url.startswith('https://linkedin.com'):
+                    url = url.replace('https://linkedin.com', 'https://www.linkedin.com')
+            url = re.sub(r'[.,;:)\s]+$', '', url)
+            return url
+    
+    linkedin_mention = re.search(r'linkedin[\s:]*([^\s]+)', text, re.IGNORECASE)
+    if linkedin_mention:
+        potential_url = linkedin_mention.group(1)
+        if '.' in potential_url and '/' in potential_url:
+            url = re.sub(r'[.,;:)\s]+$', '', potential_url)
+            if not url.startswith('http'):
+                url = 'https://' + ('' if url.startswith('www.') else 'www.') + url
+            return url
+    
+    linkedin_context = re.search(r'linkedin.*?(https?://[^\s]+)', text, re.IGNORECASE)
+    if linkedin_context:
+        url = linkedin_context.group(1)
+        url = re.sub(r'[.,;:)\s]+$', '', url)
+        return url
+    
+    lines_with_linkedin = [line for line in text.split('\n') if 'linkedin' in line.lower()]
+    for line in lines_with_linkedin:
+        url_match = re.search(r'https?://[^\s]+', line)
+        if url_match:
+            url = url_match.group(0)
+            url = re.sub(r'[.,;:)\s]+$', '', url)
+            return url
+    
+    return ""
+
+# Calculate the individual scores and overall score based on the algorithm
+def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
     try:
-        # Import necessary libraries
-        import pytesseract
-        from PIL import Image, ImageEnhance, ImageFilter
-        import numpy as np
-        import cv2
+        scores = {}
         
-        # Open the image file
-        image = Image.open(image_file)
-        
-        # Display original image
-        st.image(image, caption="Original Document", use_container_width=True)
-        
-        # Convert to OpenCV format for preprocessing
-        img_cv = np.array(image)
-        
-        # Convert to grayscale
-        if len(img_cv.shape) == 3:  # Color image
-            gray = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
+        if parsed_data["Relevancy Score (0-100)"] != "Not Available":
+            try:
+                scores["relevancy"] = float(parsed_data["Relevancy Score (0-100)"])
+            except ValueError:
+                scores["relevancy"] = 0
         else:
-            gray = img_cv
+            scores["relevancy"] = 0
             
-        # Apply threshold to get black and white image
-        _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        
-        # Apply some noise reduction
-        denoised = cv2.fastNlMeansDenoising(binary, None, 10, 7, 21)
-        
-        # Convert back to PIL Image and enhance contrast
-        enhanced_img = Image.fromarray(denoised)
-        enhancer = ImageEnhance.Contrast(enhanced_img)
-        enhanced_img = enhancer.enhance(2)
-        
-        # Display enhanced image
-        st.image(enhanced_img, caption="Enhanced Image for OCR", use_container_width=True)
-        
-        # Use multiple OCR configurations to improve extraction
-        custom_config = r'--oem 3 --psm 6 -l eng'
-        text1 = pytesseract.image_to_string(enhanced_img, config=custom_config)
-        
-        custom_config2 = r'--oem 3 --psm 3 -l eng'
-        text2 = pytesseract.image_to_string(enhanced_img, config=custom_config2)
-        
-        # Combine texts from different OCR configurations
-        text = text1 + "\n" + text2
-        
-        return text if text else None
-    except ImportError:
-        st.warning("pytesseract or CV2 is not installed. Using alternative text extraction.")
-        return extract_text_fallback(image_file)
-    except Exception as e:
-        st.error(f"Error using pytesseract OCR: {str(e)}")
-        return extract_text_fallback(image_file)
-
-# Fallback text extraction using PIL's built-in capabilities
-def extract_text_fallback(image_file):
-    try:
-        # Display the image
-        image = Image.open(image_file)
-        st.image(image, caption="Uploaded Document", use_container_width=True)
-        
-        # Since we can't extract text without OCR, provide a manual input option
-        st.warning("Automated text extraction is unavailable. Please enter the text from the document manually.")
-        manual_text = st.text_area("Enter document text manually:", height=150, key="fallback_manual_text")
-        
-        if manual_text:
-            return manual_text
+        if parsed_data["Strong Matches Score"] != "Not Available":
+            try:
+                scores["strong_matches"] = float(parsed_data["Strong Matches Score"])
+            except ValueError:
+                scores["strong_matches"] = 0
         else:
-            st.error("Manual text input required for analysis.")
-            return None
-    except Exception as e:
-        st.error(f"Error processing image: {str(e)}")
-        return None
-
-# Extract text from PDF using pytesseract with enhanced processing
-def extract_text_from_pdf_ocr(pdf_file):
-    try:
-        # Create a temporary file to store the PDF content
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
-            temp_pdf.write(pdf_file.read())
-            temp_pdf_path = temp_pdf.name
+            scores["strong_matches"] = 0
+            
+        if parsed_data["Partial Matches Score"] != "Not Available":
+            try:
+                scores["partial_matches"] = float(parsed_data["Partial Matches Score"])
+            except ValueError:
+                scores["partial_matches"] = 0
+        else:
+            scores["partial_matches"] = 0
         
-        try:
-            # Convert PDF to images with higher DPI for better quality
-            images = convert_from_bytes(open(temp_pdf_path, 'rb').read(), dpi=300)
+        if parsed_data["Total Experience (Years)"] != "Not Available":
+            try:
+                candidate_exp = float(parsed_data["Total Experience (Years)"])
+                scores["experience"] = min((candidate_exp / required_experience) * 100, 100)
+            except ValueError:
+                scores["experience"] = 0
+        else:
+            scores["experience"] = 0
             
-            # Extract text from each image using pytesseract
-            full_text = ""
-            for i, img in enumerate(images):
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_img:
-                    img.save(temp_img, format='JPEG', quality=95)
-                    img_path = temp_img.name
+        if parsed_data["Job Stability"] != "Not Available":
+            try:
+                job_stability = float(parsed_data["Job Stability"])
+                if job_stability <= 10:
+                    avg_tenure = (job_stability / 10) * 4
+                else:
+                    avg_tenure = job_stability
                 
-                # Open the image and use pytesseract
-                with open(img_path, 'rb') as image_file:
-                    img_text = extract_text_using_pytesseract(image_file)
-                    if img_text:
-                        full_text += img_text + "\n"
-                
-                # Clean up the temporary image file
-                os.unlink(img_path)
+                scores["stability"] = min((avg_tenure / stability_threshold) * 100, 100)
+            except ValueError:
+                scores["stability"] = 0
+        else:
+            scores["stability"] = 0
             
-            # Clean up the temporary PDF file
-            os.unlink(temp_pdf_path)
+        if parsed_data["College Rating"] != "Not Available":
+            if "premium" in parsed_data["College Rating"].lower() and "non" not in parsed_data["College Rating"].lower():
+                scores["college"] = 100
+            elif "non-premium" in parsed_data["College Rating"].lower():
+                scores["college"] = 70
+            else:
+                scores["college"] = 40
+        else:
+            scores["college"] = 20
             
-            return full_text if full_text else None
+        if parsed_data["Leadership Skills"] != "Not Available":
+            if any(word in parsed_data["Leadership Skills"].lower() for word in 
+                   ["led", "managed", "directed", "leadership", "head", "team lead"]):
+                scores["leadership"] = 100
+            else:
+                scores["leadership"] = 0
+        else:
+            scores["leadership"] = 0
             
-        except Exception as inner_e:
-            st.error(f"Error processing PDF images: {str(inner_e)}")
-            # Clean up the temporary PDF file
-            os.unlink(temp_pdf_path)
-            return None
+        if parsed_data["International Team Experience"] != "Not Available":
+            if any(word in parsed_data["International Team Experience"].lower() for word in 
+                   ["yes", "international", "global", "worldwide", "multinational"]):
+                scores["international"] = 100
+            else:
+                scores["international"] = 0
+        else:
+            scores["international"] = 0
             
-    except Exception as e:
-        st.error(f"Error extracting text from PDF using OCR: {str(e)}")
-        return None
-
-# Call AI model to analyze document and extract information with improved prompting
-def analyze_document(client, document_text, document_type):
-    prompt = f"""
-    As a document information extractor, carefully analyze the following {document_type} card text and extract these specific fields.
-    
-    IMPORTANT: Pay special attention to extracting Full Name, Date of Birth, and Father's Name (for PAN) or Address (for Aadhar).
-    Look for patterns like:
-    - Names are typically in all caps or title case
-    - DOB format is usually DD/MM/YYYY or DD-MM-YYYY
-    - Names often have designations like "S/O" (Son of), "D/O" (Daughter of), or "W/O" (Wife of) preceding Father's name
-    - Father's name might appear after phrases like "S/O", "Father's name", "नाम", etc.
-    
-    If the document is an Aadhar Card, extract:
-    - Full Name: Look for the most prominent name on the card
-    - Aadhar Number: 12 digits, often with spaces like XXXX XXXX XXXX
-    - Address: Complete address including state and pin code
-    - Date of Birth: Format DD/MM/YYYY
-    - Gender: Male/Female/Other
-    
-    If the document is a PAN Card, extract:
-    - Full Name: Look for the most prominent name in capital letters
-    - PAN Number: 10 character alphanumeric code (like ABCDE1234F)
-    - Date of Birth: Format DD/MM/YYYY 
-    - Father's Name: Usually listed after the primary name
-    
-    Format your response EXACTLY as follows, with each field on a new line:
-    Full Name: [extracted name]
-    {document_type} Number: [extracted number]
-    {"Address: [extracted address]" if document_type.lower() == 'aadhar' else "Father's Name: [extracted father's name]"}
-    Date of Birth: [extracted DOB]
-    {"Gender: [extracted gender]" if document_type.lower() == 'aadhar' else ""}
-    
-    If you cannot find a specific field with high confidence, respond with "Not Found" for that field.
-    
-    Document Text:
-    {document_text}
-    """
-    
-    try:
-        response = client.chat.completions.create(
-            model="mixtral-8x7b-32768",  # Using Mixtral for better extraction capabilities
-            messages=[
-                {"role": "system", "content": "You are a document information extraction expert specialized in Indian identity documents. Your primary goal is to accurately extract personal information from text, especially names, dates of birth, and relationships. Even if the text is messy from OCR, you're skilled at identifying patterns that indicate personal information."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,  # Very low temperature for more deterministic extraction
-            max_tokens=1000
+        if parsed_data["Competitor Experience"] != "Not Available":
+            if parsed_data["Competitor Experience"].lower().startswith("yes"):
+                if any(word in parsed_data["Competitor Experience"].lower() for word in 
+                       ["anaplan", "workday", "oracle", "sap"]):
+                    scores["competitor"] = 100
+                else:
+                    scores["competitor"] = 50
+            else:
+                scores["competitor"] = 0
+        else:
+            scores["competitor"] = 0
+            
+        overall_score = (
+            (0.40 * scores["relevancy"]) +
+            (0.15 * scores["experience"]) +
+            (0.10 * scores["stability"]) +
+            (0.10 * scores["college"]) +
+            (0.10 * scores["leadership"]) +
+            (0.10 * scores["international"]) +
+            (0.05 * scores["competitor"])
         )
-        ai_response = response.choices[0].message.content
         
-        # Debugging: Show AI response in Streamlit
-        with st.expander("Raw AI Response Output (Debugging)"):
-            st.text_area("Raw AI Response", ai_response, height=200, key="raw_ai_response")
-        
-        return ai_response
+        if overall_score >= 80:
+            recommendation = "Strong Fit ✅ - Call for interview"
+        elif overall_score >= 60:
+            recommendation = "Consider 🤔 - Further screening needed"
+        else:
+            recommendation = "Reject ❌ - Does not meet minimum criteria"
+            
+        return overall_score, recommendation, scores
+    
     except Exception as e:
-        st.error(f"Error during analysis: {str(e)}")
-        return None
+        st.error(f"Error calculating scores: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+        return 0, "Error in calculation", {}
 
-# Enhanced parsing function with better regex patterns
-def parse_analysis(analysis, document_type):
-    if not analysis:
-        return {}
+# Call AI model to analyze resume with enhanced evaluation attributes
+def analyze_resume(client, resume_text, job_description):
+    competitors = get_planful_competitors()
+    competitors_list = ", ".join(competitors)
     
-    # Define expected fields based on document type
-    if document_type.lower() == 'aadhar':
-        expected_fields = ["Full Name", "Aadhar Number", "Address", "Date of Birth", "Gender"]
-    else:  # PAN
-        expected_fields = ["Full Name", "PAN Number", "Father's Name", "Date of Birth"]
-    
-    result = {field: "Not Found" for field in expected_fields}
-    
-    # Extract values using regex
-    lines = analysis.strip().split('\n')
-    for line in lines:
-        if ':' in line:
-            parts = line.split(':', 1)
-            if len(parts) == 2:
-                key, value = parts
-                key = key.strip()
-                value = value.strip()
-                
-                # Special handling for father's name which might be missed or misformatted
-                if "father" in key.lower() and document_type.lower() == 'pan':
-                    result["Father's Name"] = value if value and value != "Not Found" else "Not Found"
-                # Special handling for other fields
-                elif key in result and value and value != "Not Found":
-                    result[key] = value
-    
-    # If certain critical fields were not found, try to extract them using regex patterns
-    if document_text and (result["Full Name"] == "Not Found" or 
-                         result["Date of Birth"] == "Not Found" or 
-                         (document_type.lower() == 'pan' and result["Father's Name"] == "Not Found")):
-        
-        # Try to find name patterns
-        if result["Full Name"] == "Not Found":
-            name_patterns = [
-                r'Name\s*:\s*([A-Z][a-zA-Z\s\.]+)',
-                r'NAME\s*:\s*([A-Z][a-zA-Z\s\.]+)',
-                r'([A-Z]{2,}\s+[A-Z]{2,}(?:\s+[A-Z]{2,})?)'
-            ]
-            for pattern in name_patterns:
-                matches = re.search(pattern, document_text)
-                if matches:
-                    result["Full Name"] = matches.group(1).strip()
-                    break
-        
-        # Try to find DOB patterns
-        if result["Date of Birth"] == "Not Found":
-            dob_patterns = [
-                r'(?:DOB|Date of Birth|बर्थ|DOB|Birth)[\s:]*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})',
-                r'(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})'
-            ]
-            for pattern in dob_patterns:
-                matches = re.search(pattern, document_text)
-                if matches:
-                    result["Date of Birth"] = matches.group(1).strip()
-                    break
-        
-        # Try to find father's name patterns for PAN
-        if document_type.lower() == 'pan' and result["Father's Name"] == "Not Found":
-            father_patterns = [
-                r'(?:Father|S/O|D/O|W/O|Son of|Daughter of|Wife of)[\'s]*\s*(?:Name\s*)?[:]*\s*([A-Z][a-zA-Z\s\.]+)',
-                r'(?:पिता|फादर).*?[:]*\s*([A-Z][a-zA-Z\s\.]+)'
-            ]
-            for pattern in father_patterns:
-                matches = re.search(pattern, document_text, re.IGNORECASE)
-                if matches:
-                    result["Father's Name"] = matches.group(1).strip()
-                    break
-    
-    return result
-
-# Detect document type with improved patterns
-def detect_document_type(client, document_text):
     prompt = f"""
-    Analyze the following document text and determine if it's an Aadhar Card or a PAN Card. 
+    As an expert resume analyzer, review the following resume against the job description.
+    Provide a structured analysis with EXACT labeled fields as follows:
     
-    Characteristics of an Aadhar Card:
-    - Contains a 12-digit Aadhar number (possibly with spaces like XXXX XXXX XXXX)
-    - Has the UIDAI logo or mentions UIDAI
-    - Contains a complete address including state and pincode
-    - Usually has "Government of India" or "भारत सरकार" text
-    - Often has the phrase "Unique Identification Authority of India"
+    Candidate Name: [Extract full name]
+    Total Experience (Years): [Calculate years from earliest job to latest or current]
+    Relevancy Score (0-100): [Score based on overall match]
+    Strong Matches Score: [Score for exact skill matches]
+    Strong Matches Reasoning: [Explain strong matches]
+    Partial Matches Score: [Score for related skills]
+    Partial Matches Reasoning: [Explain partial matches]
+    All Tech Skills: [List ALL technical skills]
+    Relevant Tech Skills: [List only skills relevant to job]
+    Degree: [Highest degree only]
+    College/University: [Institution name]
+    Job Applying For: [Extract Job ID from job description]
+    College Rating: [Rate as "Premium" or "Non-Premium"]
+    Job Stability: [Rate 1-10, give 10 if ≥2 years per job]
+    Latest Company: [Most recent employer]
+    Leadership Skills: [Describe leadership experience]
+    International Team Experience: [Yes/No + details about working with teams outside India]
+    Notice Period: [Extract notice period info or "Immediate Joiner"]
+    LinkedIn URL: [Extract LinkedIn profile URL if present, otherwise leave blank]
+    Portfolio URL: [Extract any portfolio, GitHub, or personal website URL if present, otherwise leave blank]
+    Work History: [List all previous companies and roles]
+    Competitor Experience: [Yes/No. Check if resume mentions experience at any of these companies: {competitors_list}]
     
-    Characteristics of a PAN Card:
-    - Contains a 10-character PAN number (alphanumeric with format like ABCDE1234F)
-    - Usually has "Income Tax Department" or "Permanent Account Number" text
-    - Often mentions "Government of India" or "भारत सरकार"
-    - Contains "Date of Birth" but usually no address
-    - May contain "PAN" or "Permanent Account Number" text
+    Use EXACTLY these field labels in your response, followed by your analysis.
+    DO NOT use any markdown formatting in your response.
     
-    Document Text:
-    {document_text}
+    Resume:
+    {resume_text}
     
-    Respond with ONLY "Aadhar" or "PAN" (case sensitive, exactly as written).
+    Job Description:
+    {job_description}
     """
     
     try:
         response = client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
-                {"role": "system", "content": "You are a document classifier specialized in identifying Indian identity documents."},
+                {"role": "system", "content": "You are an expert resume analyzer. Your task is to extract and analyze key information from resumes against job descriptions. Format your response as a simple list of key-value pairs with NO markdown formatting."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
-            max_tokens=10
+            temperature=0.5,
+            max_tokens=3000
         )
-        doc_type = response.choices[0].message.content.strip()
+        ai_response = response.choices[0].message.content
         
-        # Validate response
-        if doc_type not in ["Aadhar", "PAN"]:
-            # Try to detect based on patterns
-            if re.search(r'\b\d{4}\s?\d{4}\s?\d{4}\b', document_text) or "uidai" in document_text.lower():
-                doc_type = "Aadhar"
-            elif re.search(r'\b[A-Z]{5}\d{4}[A-Z]\b', document_text):
-                doc_type = "PAN"
-            else:
-                # Default to Aadhar if uncertain
-                doc_type = "Aadhar"
+        # Debugging: Show AI response in Streamlit
+        with st.expander("AI Response Output (Debugging)"):
+            st.text_area("Raw AI Response", ai_response, height=300)
         
-        return doc_type
+        return ai_response
     except Exception as e:
-        st.error(f"Error detecting document type: {str(e)}")
-        return "Unknown"
+        st.error(f"Error during analysis: {str(e)}")
+        return None
+
+# Clean text by removing markdown and other formatting
+def clean_text(text):
+    if not text or text == "Not Available":
+        return text
+        
+    # Remove markdown formatting
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Bold
+    text = re.sub(r'\*(.*?)\*', r'\1', text)      # Italic
+    text = re.sub(r'__(.*?)__', r'\1', text)      # Underline
+    text = re.sub(r'_(.*?)_', r'\1', text)        # Italic alternative
+    text = re.sub(r'`(.*?)`', r'\1', text)        # Code
+    
+    # Remove bullet points and numbering
+    text = re.sub(r'^\s*[-•*]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    
+    return text.strip()
+
+# Manually check for competitor mentions in work history
+def check_competitor_experience(work_history, competitor_list):
+    if not work_history or work_history == "Not Available":
+        return "No"
+    
+    for competitor in competitor_list:
+        if competitor.lower() in work_history.lower():
+            return f"Yes - {competitor}"
+    
+    return "No"
+
+# Parse AI response using improved key-value extraction
+def parse_analysis(analysis, resume_text=None):
+    try:
+        # Definition of expected fields with exact matches and alternative formats
+        expected_fields = {
+            "Candidate Name": ["candidate name", "candidate's name", "name"],
+            "Total Experience (Years)": ["total experience (years)", "total experience", "experience (years)", "years of experience"],
+            "Relevancy Score (0-100)": ["relevancy score (0-100)", "relevancy score", "relevance score"],
+            "Strong Matches Score": ["strong matches score", "strong match score"],
+            "Strong Matches Reasoning": ["strong matches reasoning", "strong match reasoning"],
+            "Partial Matches Score": ["partial matches score", "partial match score"],
+            "Partial Matches Reasoning": ["partial matches reasoning", "partial match reasoning"],
+            "All Tech Skills": ["all tech skills", "all technical skills"],
+            "Relevant Tech Skills": ["relevant tech skills", "relevant technical skills"],
+            "Degree": ["degree", "highest degree", "qualification"],
+            "College/University": ["college/university", "university", "college", "institution"],
+            "Job Applying For": ["job applying for", "job id", "position applying for", "role applying for"],
+            "College Rating": ["college rating", "university rating", "institution rating"],
+            "Job Stability": ["job stability", "employment stability"],
+            "Latest Company": ["latest company", "current company", "most recent company"],
+            "Leadership Skills": ["leadership skills", "leadership experience", "leadership"],
+            "International Team Experience": ["international team experience", "global team experience", "international experience"],
+            "Notice Period": ["notice period", "joining availability", "availability to join"],
+            "LinkedIn URL": ["linkedin url", "linkedin profile", "linkedin", "linkedin link"],
+            "Portfolio URL": ["portfolio url", "portfolio", "github url", "github", "personal website", "personal url", "website"],
+            "Work History": ["work history", "employment history", "companies worked for", "previous companies"],
+            "Competitor Experience": ["competitor experience", "worked for competitor", "competitor", "competition experience"],
+        }
+        
+        # Create a dictionary to store the extracted values
+        result = {field: "Not Available" for field in expected_fields}
+        
+        # Split the AI output into lines for processing
+        lines = analysis.split('\n')
+        
+        # Process each line to extract fields
+        current_field = None
+        current_value = []
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:  # Skip empty lines
+                continue
+                
+            # Check if this line starts a new field
+            new_field_found = False
+            
+            if ':' in line:
+                parts = line.split(':', 1)
+                key = parts[0].strip().lower()
+                value = parts[1].strip()
+                
+                # Check if this matches any of our expected fields
+                for field, alternatives in expected_fields.items():
+                    if key in alternatives:
+                        # If we were building a previous field value, save it
+                        if current_field and current_value:
+                            result[current_field] = '\n'.join(current_value)
+                            
+                        # Start the new field
+                        current_field = field
+                        current_value = [value] if value else []
+                        new_field_found = True
+                        break
+            
+            # If this line doesn't start a new field and we're in the middle of a field, append to current value
+            if not new_field_found and current_field and line:
+                # Only append if the line doesn't look like it might be a mislabeled field
+                if ':' not in line or line.split(':', 1)[0].strip().lower() not in [alt for alts in expected_fields.values() for alt in alts]:
+                    current_value.append(line)
+            
+            # If we're at the last line and have an active field, save it
+            if i == len(lines) - 1 and current_field and current_value:
+                result[current_field] = '\n'.join(current_value)
+        
+        # Special handling for numeric fields
+        numeric_fields = ["Total Experience (Years)", "Relevancy Score (0-100)", "Strong Matches Score", 
+                         "Partial Matches Score", "Job Stability"]
+        
+        for field in numeric_fields:
+            if result[field] != "Not Available":
+                # Try to extract a numeric value
+                matches = re.search(r'(\d+(?:\.\d+)?)', result[field])
+                if matches:
+                    result[field] = matches.group(1)
+        
+        # Ensure fields like Job Stability are numeric
+        if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?$', result["Job Stability"]):
+            # Try to extract a number from the text
+            matches = re.search(r'(\d+(?:\.\d+)?)/10', result["Job Stability"])
+            if matches:
+                result["Job Stability"] = matches.group(1)
+            else:
+                matches = re.search(r'(\d+(?:\.\d+)?)', result["Job Stability"])
+                if matches:
+                    result["Job Stability"] = matches.group(1)
+        
+        # Normalize College Rating
+        if result["College Rating"] != "Not Available":
+            if "premium" in result["College Rating"].lower():
+                result["College Rating"] = "Premium"
+            elif "non" in result["College Rating"].lower() or "not" in result["College Rating"].lower():
+                result["College Rating"] = "Non-Premium"
+        
+        # Normalize International Team Experience
+        if result["International Team Experience"] != "Not Available":
+            if any(word in result["International Team Experience"].lower() for word in ["yes", "has", "worked", "experience"]):
+                if len(result["International Team Experience"]) < 5:  # Just "Yes" or similar
+                    result["International Team Experience"] = "Yes"
+            elif any(word in result["International Team Experience"].lower() for word in ["no", "not", "none"]):
+                if len(result["International Team Experience"]) < 5:  # Just "No" or similar
+                    result["International Team Experience"] = "No"
+        
+        # Handle LinkedIn URL extraction with improved method
+        if resume_text:
+            if result["LinkedIn URL"] != "Not Available":
+                linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
+                if linkedin_match:
+                    result["LinkedIn URL"] = linkedin_match.group(0)
+                else:
+                    extracted_url = extract_linkedin_url(result["LinkedIn URL"])
+                    if extracted_url:
+                        result["LinkedIn URL"] = extracted_url
+                    else:
+                        result["LinkedIn URL"] = extract_linkedin_url(resume_text)
+            else:
+                result["LinkedIn URL"] = extract_linkedin_url(resume_text)
+        else:
+            if result["LinkedIn URL"] != "Not Available":
+                linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/\S+', result["LinkedIn URL"])
+                if linkedin_match:
+                    result["LinkedIn URL"] = linkedin_match.group(0)
+                else:
+                    linked_in_text = result["LinkedIn URL"].lower()
+                    if any(phrase in linked_in_text for phrase in ["not available", "not mentioned", "not found", "no linkedin"]):
+                        result["LinkedIn URL"] = ""
+            else:
+                result["LinkedIn URL"] = ""
+        
+        # For Portfolio URL - use more specific extraction
+        if result["Portfolio URL"] != "Not Available":
+            portfolio_match = re.search(r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|behance\.net|dribbble\.com|[\w-]+\.(?:com|io|org|net))/\S+', result["Portfolio URL"])
+            if portfolio_match:
+                result["Portfolio URL"] = portfolio_match.group(0)
+            elif "not available" in result["Portfolio URL"].lower() or "not found" in result["Portfolio URL"].lower() or "not mentioned" in result["Portfolio URL"].lower():
+                result["Portfolio URL"] = ""
+        else:
+            result["Portfolio URL"] = ""
+        
+        if result["Work History"] == "Not Available" and "Latest Company" in result and result["Latest Company"] != "Not Available":
+            result["Work History"] = result["Latest Company"]
+
+        if result["Competitor Experience"] == "Not Available" or not any(word in result["Competitor Experience"].lower() for word in ["yes", "no"]):
+            result["Competitor Experience"] = check_competitor_experience(result["Work History"], get_planful_competitors())
+            
+        for field in result:
+            result[field] = clean_text(result[field])
+            
+        required_experience = 3
+        stability_threshold = 2
+        
+        overall_score, recommendation, individual_scores = calculate_scores(result, required_experience, stability_threshold)
+        
+        result["Overall Weighted Score"] = str(round(overall_score, 2))
+        result["Selection Recommendation"] = recommendation
+        
+        # Convert to list in the expected order
+        columns = list(expected_fields.keys()) + ["Overall Weighted Score", "Selection Recommendation"]
+        extracted_data = [result.get(field, "Not Available") for field in columns]
+        
+        with st.expander("Extracted Data (Debugging)"):
+            st.write("### Extracted Fields")
+            for k, v in zip(columns, extracted_data):
+                st.write(f"{k}: {v}")
+                
+            st.write("### Individual Scores")
+            for k, v in individual_scores.items():
+                st.write(f"{k}: {round(v, 2)}")
+        
+        return extracted_data
+    
+    except Exception as e:
+        st.error(f"Error parsing AI response: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+        return None
+
+# Format Excel with nice styling and organization
+def format_excel_workbook(wb, columns):
+    ws = wb.active
+    
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    
+    header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    
+    normal_font = Font(name='Calibri', size=11)
+    normal_alignment = Alignment(vertical='center', wrap_text=True)
+    
+    score_alignment = Alignment(horizontal='center', vertical='center')
+    
+    url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
+    
+    competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
+    
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    for col_num, column in enumerate(columns, 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+    
+    for row in range(2, ws.max_row + 1):
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.font = normal_font
+            cell.alignment = normal_alignment
+            cell.border = thin_border
+            
+            column_name = columns[col-1]
+            if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
+                cell.alignment = score_alignment
+                
+                if cell.value not in ["Not Available", None, ""]:
+                    try:
+                        if any(term in column_name for term in ["Score", "Job Stability"]):
+                            score_value = float(cell.value)
+                            if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
+                                cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                            elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
+                                cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                            else:
+                                cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                    except (ValueError, TypeError):
+                        pass
+            
+            if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
+                if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
+                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                elif "non-premium" in str(cell.value).lower():
+                    cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+            
+            if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
+                if "Strong Fit" in str(cell.value):
+                    cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                elif "Consider" in str(cell.value):
+                    cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                elif "Reject" in str(cell.value):
+                    cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+            
+            if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
+                cell.font = url_font
+                cell.hyperlink = cell.value
+            
+            if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
+                if cell.value.lower().startswith("yes"):
+                    cell.font = competitor_yes_font
+                    cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
+    
+    for col_num, column in enumerate(columns, 1):
+        column_letter = openpyxl.utils.get_column_letter(col_num)
+        if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
+            ws.column_dimensions[column_letter].width = 40
+        elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
+            ws.column_dimensions[column_letter].width = 30
+        else:
+            ws.column_dimensions[column_letter].width = 18
+    
+    ws.freeze_panes = "A2"
+    
+    return wb
 
 # Main Streamlit App
 def main():
-    st.title("📄 Aadhar & PAN Card Information Extractor")
-    st.write("Upload an Aadhar card or PAN card image/PDF to extract information")
-
-    # Load environment variables
+    st.title("📝 Enhanced Resume Analyzer")
+    st.markdown("Built using the standardized resume scoring algorithm")
+    
+    with st.sidebar:
+        st.title("Scoring Algorithm")
+        st.markdown("""
+        ### Overall Score Formula
+        - 40% × Relevancy Score 
+        - 15% × Experience Score
+        - 10% × Job Stability Score
+        - 10% × College Rating
+        - 10% × Leadership Score
+        - 10% × International Experience
+        - 5% × Competitor Experience
+        
+        ### Selection Categories
+        - **Strong Fit (80-100) ✅**: Call for an interview
+        - **Consider (60-79) 🤔**: Further screening needed
+        - **Reject (0-59) ❌**: Does not meet minimum criteria
+        """)
+        
+        st.markdown("---")
+        st.markdown("### About This App")
+        st.write("This app analyzes resumes against job descriptions using AI and provides a scoring system based on various criteria.")
+    
     load_dotenv()
     
     if not os.environ.get("GROQ_API_KEY"):
         st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
-        st.info("You can get a Groq API key at https://console.groq.com/")
+        return
         
-        # Provide option for manual key entry
-        manual_key = st.text_input("Enter your Groq API key:", type="password", key="manual_groq_key")
-        if manual_key:
-            os.environ["GROQ_API_KEY"] = manual_key
-            st.success("API key set for this session!")
+    client = initialize_groq_client()
+    uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
+    job_description = st.text_area("Paste the job description here", height=200)
+    
+    results_data = []
+    
+    if uploaded_files and job_description:
+        if st.button("Analyze All Resumes"):
+            progress_bar = st.progress(0)
+            total_files = len(uploaded_files)
+            
+            for i, uploaded_file in enumerate(uploaded_files):
+                st.subheader(f"Resume: {uploaded_file.name}")
+                with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                    resume_text = extract_text_from_pdf(uploaded_file)
+                    
+                    if resume_text:
+                        analysis = analyze_resume(client, resume_text, job_description)
+                        if analysis:
+                            parsed_data = parse_analysis(analysis, resume_text)
+                            if parsed_data:
+                                results_data.append(parsed_data)
+                                st.success(f"Successfully analyzed {uploaded_file.name}")
+                            else:
+                                st.warning(f"Could not extract structured data for {uploaded_file.name}")
+                    else:
+                        st.error(f"Could not extract text from {uploaded_file.name}")
+                        
+                progress_bar.progress((i + 1) / total_files)
+            
+            progress_bar.progress(1.0)
+    
+    if results_data:
+        st.subheader("Analysis Results")
+        
+        # Create DataFrame with the extracted data
+        # Ensure that results_data is structured correctly
+        df = pd.DataFrame(results_data)
+        
+        # Define the expected columns
+        columns = [
+            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
+            "Job Applying For", "College Rating", "Job Stability", "Latest Company",
+            "LinkedIn URL", "Portfolio URL", "Overall Weighted Score", "Selection Recommendation"
+        ]
+        
+        # Filter to only show columns that exist in our dataframe
+        display_columns = [col for col in columns if col in df.columns]
+        
+        if display_columns:  # Check if there are any columns to display
+            st.dataframe(df[display_columns])
         else:
-            return
-    
-    # Initialize Groq client
-    groq_client = initialize_groq_client()
-    
-    # Create tabs for different document types
-    tab1, tab2 = st.tabs(["Auto-Detect Document", "Specify Document Type"])
-    
-    with tab1:
-        st.subheader("Upload your document")
-        uploaded_file = st.file_uploader("Upload Aadhar or PAN card (PDF or Image)", 
-                                        type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                        key="auto_detect")
+            st.warning("No columns to display.")
         
-        # Add global variable to store document text for parsing
-        document_text = None
-        
-        if uploaded_file:
-            with st.spinner("Processing document..."):
-                file_extension = uploaded_file.name.split('.')[-1].lower()
+        with st.spinner("Preparing Excel file..."):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
+                df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
+                wb = openpyxl.load_workbook(tmpfile.name)
                 
-                # Extract text based on file type
-                if file_extension == 'pdf':
-                    document_text = extract_text_from_pdf(uploaded_file)
-                    
-                    # If standard PDF extraction failed, try OCR
-                    if not document_text or len(document_text) < 50:
-                        st.info("Using OCR to extract text from PDF...")
-                        uploaded_file.seek(0)  # Reset file pointer
-                        document_text = extract_text_from_pdf_ocr(uploaded_file)
-                else:  # Image file
-                    document_text = extract_text_using_pytesseract(uploaded_file)
-                
-                if document_text:
-                    # Show extracted raw text
-                    with st.expander("Show Extracted Raw Text"):
-                        st.text_area("Extracted Text", document_text, height=200, key="tab1_extracted_text")
-                    
-                    # Detect document type
-                    document_type = detect_document_type(groq_client, document_text)
-                    st.info(f"Detected document type: {document_type} Card")
-                    
-                    # Extract information
-                    analysis = analyze_document(groq_client, document_text, document_type)
-                    
-                    if analysis:
-                        extracted_info = parse_analysis(analysis, document_type)
-                        
-                        # Display extracted information in a nice format
-                        st.subheader("📋 Extracted Information")
-                        
-                        # Create a nice looking card for the info
-                        info_html = "<div style='background-color:#f0f2f6;padding:20px;border-radius:10px;'>"
-                        for field, value in extracted_info.items():
-                            info_html += f"<p><strong>{field}:</strong> {value}</p>"
-                        info_html += "</div>"
-                        
-                        st.markdown(info_html, unsafe_allow_html=True)
-                    else:
-                        st.error("Failed to analyze the document.")
+                # Ensure that display_columns is not empty before passing it to the formatting function
+                if display_columns:
+                    wb = format_excel_workbook(wb, display_columns)
                 else:
-                    st.error("Could not extract text from the uploaded file.")
-                    
-                    # Offer manual text input as fallback
-                    st.info("As a fallback, you can manually enter the text from your document.")
-                    manual_text = st.text_area("Enter document text manually:", height=150, key="tab1_manual_text")
-                    
-                    if manual_text and st.button("Process Manual Text", key="tab1_process_button"):
-                        # Detect document type
-                        document_type = detect_document_type(groq_client, manual_text)
-                        st.info(f"Detected document type: {document_type} Card")
-                        
-                        # Extract information
-                        analysis = analyze_document(groq_client, manual_text, document_type)
-                        
-                        if analysis:
-                            extracted_info = parse_analysis(analysis, document_type)
-                            
-                            # Display extracted information in a nice format
-                            st.subheader("📋 Extracted Information")
-                            
-                            info_html = "<div style='background-color:#f0f2f6;padding:20px;border-radius:10px;'>"
-                            for field, value in extracted_info.items():
-                                info_html += f"<p><strong>{field}:</strong> {value}</p>"
-                            info_html += "</div>"
-                            
-                            st.markdown(info_html, unsafe_allow_html=True)
-                        else:
-                            st.error("Failed to analyze the manual text.")
-    
-    with tab2:
-        st.subheader("Upload your document with specific type")
-        doc_type = st.radio("Select Document Type", ["Aadhar", "PAN"], key="document_type_radio")
-        uploaded_file = st.file_uploader("Upload document (PDF or Image)", 
-                                        type=['pdf', 'png', 'jpg', 'jpeg'], 
-                                        key="specific_type")
-        
-        if uploaded_file:
-            with st.spinner(f"Processing {doc_type} card..."):
-                file_extension = uploaded_file.name.split('.')[-1].lower()
+                    st.warning("No columns available for formatting.")
                 
-                # Extract text based on file type
-                if file_extension == 'pdf':
-                    document_text = extract_text_from_pdf(uploaded_file)
-                    
-                    # If standard PDF extraction failed, try OCR
-                    if not document_text or len(document_text) < 50:
-                        st.info("Using OCR to extract text from PDF...")
-                        uploaded_file.seek(0)  # Reset file pointer
-                        document_text = extract_text_from_pdf_ocr(uploaded_file)
-                else:  # Image file
-                    document_text = extract_text_using_pytesseract(uploaded_file)
-                
-                if document_text:
-                    # Show extracted raw text
-                    with st.expander("Show Extracted Raw Text"):
-                        st.text_area("Extracted Text", document_text, height=200, key="tab2_extracted_text")
-                    
-                    # Extract information
-                    analysis = analyze_document(groq_client, document_text, doc_type)
-                    
-                    if analysis:
-                        extracted_info = parse_analysis(analysis, doc_type)
-                        
-                        # Display extracted information in a nice format
-                        st.subheader("📋 Extracted Information")
-                        
-                        # Create a nice looking card for the info
-                        info_html = "<div style='background-color:#f0f2f6;padding:20px;border-radius:10px;'>"
-                        for field, value in extracted_info.items():
-                            info_html += f"<p><strong>{field}:</strong> {value}</p>"
-                        info_html += "</div>"
-                        
-                        st.markdown(info_html, unsafe_allow_html=True)
-                    else:
-                        st.error("Failed to analyze the document.")
-                else:
-                    st.error("Could not extract text from the uploaded file.")
-                    
-                    # Offer manual text input as fallback
-                    st.info("As a fallback, you can manually enter the text from your document.")
-                    manual_text = st.text_area("Enter document text manually:", height=150, key="tab2_manual_text")
-                    
-                    if manual_text and st.button("Process Manual Text", key="tab2_process_button"):
-                        # Extract information
-                        analysis = analyze_document(groq_client, manual_text, doc_type)
-                        
-                        if analysis:
-                            extracted_info = parse_analysis(analysis, doc_type)
-                            
-                            # Display extracted information in a nice format
-                            st.subheader("📋 Extracted Information")
-                            
-                            info_html = "<div style='background-color:#f0f2f6;padding:20px;border-radius:10px;'>"
-                            for field, value in extracted_info.items():
-                                info_html += f"<p><strong>{field}:</strong> {value}</p>"
-                            info_html += "</div>"
-                            
-                            st.markdown(info_html, unsafe_allow_html=True)
-                        else:
-                            st.error("Failed to analyze the manual text.")
+                wb.save(tmpfile.name)
+                tmpfile_path = tmpfile.name
+            
+            st.success("Excel file created successfully with all requested evaluation metrics!")
+            
+            with open(tmpfile_path, "rb") as file:
+                file_data = file.read()
+                st.download_button(
+                    label="📥 Download Comprehensive Excel Report",
+                    data=file_data,
+                    file_name=f"enhanced_resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
-    # Add information about the app
-    st.markdown("---")
-    st.subheader("ℹ️ About this app")
-    st.write("""
-    This application extracts information from Aadhar and PAN cards using OCR and AI technology.
-    The extracted information is presented directly in the app.
-    
-    **Note:** All processing is done securely, and no data is stored by this application.
-    
-    **Requirements:**
-    - Python packages: streamlit, groq, python-dotenv, Pillow, PyPDF2, pdf2image
-    - For enhanced OCR: pytesseract, opencv-python
-    - A valid Groq API key must be set in the .env file, environment variables, or entered manually
-    - For optimal OCR performance:
-      - Tesseract OCR (pip install pytesseract) and Tesseract installed on your system
-      - Or you can use the manual text input option as a fallback
-    """)
-    
-    # Add setup instructions for Tesseract
-    with st.expander("Tesseract OCR Setup Instructions"):
-        st.markdown("""
-        ### Setting up Tesseract OCR
-        
-        Tesseract is a free and open-source OCR engine that you can install locally:
-        
-        1. **Install Tesseract OCR on your system**:
-        
-           - **Windows**: Download and install from [https://github.com/UB-Mannheim/tesseract/wiki](https://github.com/UB-Mannheim/tesseract/wiki)
-           - **macOS**: `brew install tesseract`
-           - **Linux**: `sudo apt install tesseract-ocr`
-        
-        2. **Install the Python wrapper and OpenCV for image processing**:
-        
-           ```bash
-           pip install pytesseract opencv-python
-           ```
-        
-        3. **Make sure Tesseract is in your PATH**
-        
-           For Windows, you might need to point to the Tesseract executable:
-           
-           ```python
-           import pytesseract
-           pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
-           ```
-           
-           You can add this line to your code if needed.
-        """)
-    
-    # Add manual input instructions
-    with st.expander("Using Manual Text Input"):
-        st.markdown("""
-        ### Using Manual Text Input
-        
-        If automated OCR isn't working well, you can use the manual text input feature:
-        
-        1. Upload your document (this allows the app to try automated extraction first)
-        2. If extraction fails, you'll see a text area where you can manually type or paste the text
-        3. Click "Process Manual Text" to analyze the text you entered
-        4. The app will then extract and display the information
-        
-        This is a good fallback option when dealing with:
-        - Low-quality images
-        - Complex document layouts
-        - Cases where OCR is having difficulty
-        """)
+            os.unlink(tmpfile_path)
 
 if __name__ == "__main__":
     main()
