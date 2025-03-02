@@ -240,22 +240,22 @@ def analyze_resume(client, resume_text, job_description):
     competitors_list = ", ".join(competitors)
     
     prompt = f"""
-    As an expert HR consultant analyzing this resume against the job description, extract the following information with special attention to skills matching.
+    As an expert HR consultant analyzing this resume against the job description, you MUST focus on accurate skill matching between the job description and the resume.
     
-    First, extract ALL important keywords and required skills from the job description.
+    First, carefully extract ALL important keywords and required skills from the job description.
     
     Then, provide a structured analysis with EXACTLY these labeled fields:
     
     Candidate Name: [Extract full name]
     Total Experience (Years): [Calculate years from earliest job to latest]
     
-    Strong Matches Score (0-100): [Score ONLY for EXACT keyword/skill matches between the job description and resume. If a skill in the JD exactly appears in the resume, it's a strong match.]
+    Strong Matches Score (0-100): [Assign a numeric score from 0-100 ONLY for EXACT keyword/skill matches between the job description and resume]
     Strong Matches Reasoning: [List specific EXACT skill matches with explanation (e.g., "Python: Required in JD and candidate has 3 years Python experience")]
     
-    Partial Matches Score (0-100): [Score for RELATED but NOT exact skills (e.g., JD requires Tableau but candidate has PowerBI experience)]
+    Partial Matches Score (0-100): [Assign a numeric score from 0-100 for RELATED but NOT exact skills (e.g., JD requires Tableau but candidate has PowerBI experience)]
     Partial Matches Reasoning: [List all partial/transferable skill matches with explanations (e.g., "PowerBI instead of required Tableau - transferable data visualization skill")]
     
-    Relevancy Score (0-100): [This should be a weighted calculation: 70% of Strong Matches + 30% of Partial Matches]
+    Relevancy Score (0-100): [This should be calculated as: 70% of Strong Matches Score + 30% of Partial Matches Score]
     
     All Tech Skills: [List ALL technical skills from resume]
     Relevant Tech Skills: [List only skills relevant to job]
@@ -273,7 +273,11 @@ def analyze_resume(client, resume_text, job_description):
     Work History: [List all previous companies and roles]
     Competitor Experience: [ONLY say "Yes - [Competitor Name]" if they worked at any of these companies: {competitors_list}. Otherwise leave completely blank.]
     
-    VERY IMPORTANT: Make sure to assign actual numeric values for "Strong Matches Score" and "Partial Matches Score" - they must be numbers between 0-100.
+    VERY IMPORTANT: 
+    1. For Strong Matches Score and Partial Matches Score, you MUST assign numeric values between 0-100. 
+    2. For a perfect Strong match (all JD skills found in resume), assign 100. For no matches, assign 0.
+    3. For Partial Matches, evaluate how closely the candidate's alternative skills relate to what's requested.
+    4. Include actual numbers in your response, like "Strong Matches Score: 75" or "Partial Matches Score: 60"
     
     Resume:
     {resume_text}
@@ -293,6 +297,27 @@ def analyze_resume(client, resume_text, job_description):
             max_tokens=3000
         )
         ai_response = response.choices[0].message.content
+        
+        # Debug check for score values in the response
+        with st.expander("AI Response (Debug)"):
+            # Look for strong/partial match scores in the response for debugging
+            strong_score_match = re.search(r'Strong Matches Score:?\s*(\d+)', ai_response)
+            partial_score_match = re.search(r'Partial Matches Score:?\s*(\d+)', ai_response)
+            
+            st.write("AI Response Extract:")
+            st.write(ai_response[:500] + "..." if len(ai_response) > 500 else ai_response)
+            
+            st.write("Score Detection:")
+            if strong_score_match:
+                st.write(f"Strong Matches Score detected: {strong_score_match.group(1)}")
+            else:
+                st.write("Strong Matches Score not found in response")
+                
+            if partial_score_match:
+                st.write(f"Partial Matches Score detected: {partial_score_match.group(1)}")
+            else:
+                st.write("Partial Matches Score not found in response")
+        
         return ai_response
     except Exception as e:
         st.error(f"Error during analysis: {str(e)}")
@@ -338,9 +363,9 @@ def parse_analysis(analysis, resume_text=None):
             "Candidate Name": ["candidate name", "candidate's name", "name"],
             "Total Experience (Years)": ["total experience (years)", "total experience", "experience (years)", "years of experience"],
             "Relevancy Score (0-100)": ["relevancy score (0-100)", "relevancy score", "relevance score"],
-            "Strong Matches Score": ["strong matches score", "strong match score"],
+            "Strong Matches Score": ["strong matches score", "strong match score", "strong matches"],
             "Strong Matches Reasoning": ["strong matches reasoning", "strong match reasoning"],
-            "Partial Matches Score": ["partial matches score", "partial match score"],
+            "Partial Matches Score": ["partial matches score", "partial match score", "partial matches"],
             "Partial Matches Reasoning": ["partial matches reasoning", "partial match reasoning"],
             "All Tech Skills": ["all tech skills", "all technical skills"],
             "Relevant Tech Skills": ["relevant tech skills", "relevant technical skills"],
@@ -361,6 +386,16 @@ def parse_analysis(analysis, resume_text=None):
         
         # Create a dictionary to store the extracted values
         result = {field: "Not Available" for field in expected_fields}
+        
+        # Alternative direct extraction for Strong and Partial match scores
+        # This is a backup in case the structured field extraction fails
+        strong_score_direct = re.search(r'Strong Matches Score:?\s*(\d+)', analysis)
+        if strong_score_direct:
+            result["Strong Matches Score"] = strong_score_direct.group(1)
+            
+        partial_score_direct = re.search(r'Partial Matches Score:?\s*(\d+)', analysis)
+        if partial_score_direct:
+            result["Partial Matches Score"] = partial_score_direct.group(1)
         
         # Split the AI output into lines for processing
         lines = analysis.split('\n')
@@ -415,6 +450,26 @@ def parse_analysis(analysis, resume_text=None):
                 matches = re.search(r'(\d+(?:\.\d+)?)', result[field])
                 if matches:
                     result[field] = matches.group(1)
+        
+        # CRITICAL: Additional fallback for Strong and Partial Matches Score
+        # If we still don't have a value after the structured extraction and initial regex
+        if result["Strong Matches Score"] == "Not Available":
+            # Try a more aggressive search in the full text
+            for line in lines:
+                if "strong match" in line.lower() and re.search(r'\d+', line):
+                    number = re.search(r'(\d+)', line).group(1)
+                    if 0 <= int(number) <= 100:  # Ensure it's a valid score
+                        result["Strong Matches Score"] = number
+                        break
+        
+        if result["Partial Matches Score"] == "Not Available":
+            # Try a more aggressive search in the full text
+            for line in lines:
+                if "partial match" in line.lower() and re.search(r'\d+', line):
+                    number = re.search(r'(\d+)', line).group(1)
+                    if 0 <= int(number) <= 100:  # Ensure it's a valid score
+                        result["Partial Matches Score"] = number
+                        break
         
         # Ensure fields like Job Stability are numeric
         if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?$', result["Job Stability"]):
