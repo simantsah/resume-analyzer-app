@@ -456,20 +456,8 @@ def parse_analysis(analysis, resume_text=None):
         result["Overall Weighted Score"] = str(round(overall_score, 2))
         result["Selection Recommendation"] = recommendation
         
-        # Convert to list in the expected order
-        columns = list(expected_fields.keys()) + ["Overall Weighted Score", "Selection Recommendation"]
-        extracted_data = [result.get(field, "Not Available") for field in columns]
-        
-        with st.expander("Extracted Data (Debugging)"):
-            st.write("### Extracted Fields")
-            for k, v in zip(columns, extracted_data):
-                st.write(f"{k}: {v}")
-                
-            st.write("### Individual Scores")
-            for k, v in individual_scores.items():
-                st.write(f"{k}: {round(v, 2)}")
-        
-        return extracted_data
+        # FIX: Instead of converting to list, return the dictionary directly
+        return result
     
     except Exception as e:
         st.error(f"Error parsing AI response: {str(e)}")
@@ -638,35 +626,34 @@ def main():
     if results_data:
         st.subheader("Analysis Results")
         
-        # Create DataFrame with the extracted data
-        # Ensure that results_data is structured correctly
+        # FIX: Create DataFrame directly from the list of dictionaries
         df = pd.DataFrame(results_data)
         
-        # Define the expected columns
-        columns = [
+        # Define the expected columns for display
+        display_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Job Applying For", "College Rating", "Job Stability", "Latest Company",
             "LinkedIn URL", "Portfolio URL", "Overall Weighted Score", "Selection Recommendation"
         ]
         
         # Filter to only show columns that exist in our dataframe
-        display_columns = [col for col in columns if col in df.columns]
+        display_columns = [col for col in display_columns if col in df.columns]
         
-        if display_columns:  # Check if there are any columns to display
-            st.dataframe(df[display_columns])
+        if not display_columns:
+            st.warning("No columns to display. Check that the AI response contains the expected fields.")
         else:
-            st.warning("No columns to display.")
+            st.dataframe(df[display_columns])
         
         with st.spinner("Preparing Excel file..."):
+            # Use all available columns for the Excel export
+            excel_columns = df.columns.tolist()
+            
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
                 df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
                 wb = openpyxl.load_workbook(tmpfile.name)
                 
-                # Ensure that display_columns is not empty before passing it to the formatting function
-                if display_columns:
-                    wb = format_excel_workbook(wb, display_columns)
-                else:
-                    st.warning("No columns available for formatting.")
+                # Format the Excel workbook with all available columns
+                wb = format_excel_workbook(wb, excel_columns)
                 
                 wb.save(tmpfile.name)
                 tmpfile_path = tmpfile.name
@@ -683,6 +670,3 @@ def main():
                 )
 
             os.unlink(tmpfile_path)
-
-if __name__ == "__main__":
-    main()
