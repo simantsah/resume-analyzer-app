@@ -65,35 +65,14 @@ def extract_linkedin_url(text):
                 url = 'https://' + ('' if url.startswith('www.') else 'www.') + url
             return url
     
-    linkedin_context = re.search(r'linkedin.*?(https?://[^\s]+)', text, re.IGNORECASE)
-    if linkedin_context:
-        url = linkedin_context.group(1)
-        url = re.sub(r'[.,;:)\s]+$', '', url)
-        return url
-    
-    lines_with_linkedin = [line for line in text.split('\n') if 'linkedin' in line.lower()]
-    for line in lines_with_linkedin:
-        url_match = re.search(r'https?://[^\s]+', line)
-        if url_match:
-            url = url_match.group(0)
-            url = re.sub(r'[.,;:)\s]+$', '', url)
-            return url
-    
     return ""
 
-# Calculate the individual scores and overall score based on the algorithm
+# Calculate the individual scores and overall score based on the improved algorithm
 def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
     try:
         scores = {}
         
-        if parsed_data["Relevancy Score (0-100)"] != "Not Available":
-            try:
-                scores["relevancy"] = float(parsed_data["Relevancy Score (0-100)"])
-            except ValueError:
-                scores["relevancy"] = 0
-        else:
-            scores["relevancy"] = 0
-            
+        # Strong Matches Score - Now directly from the AI's analysis of exact skill matches
         if parsed_data["Strong Matches Score"] != "Not Available":
             try:
                 scores["strong_matches"] = float(parsed_data["Strong Matches Score"])
@@ -102,6 +81,7 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["strong_matches"] = 0
             
+        # Partial Matches Score - Now directly from the AI's analysis of related skills
         if parsed_data["Partial Matches Score"] != "Not Available":
             try:
                 scores["partial_matches"] = float(parsed_data["Partial Matches Score"])
@@ -109,30 +89,59 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
                 scores["partial_matches"] = 0
         else:
             scores["partial_matches"] = 0
+            
+        # Calculate relevancy score as a weighted sum of strong and partial matches
+        # Give more weight to strong matches (70%) than partial matches (30%)
+        weighted_strong = scores["strong_matches"] * 0.7
+        weighted_partial = scores["partial_matches"] * 0.3
         
+        # Final relevancy score is the sum of weighted strong and partial matches
+        scores["relevancy"] = min(weighted_strong + weighted_partial, 100)
+        
+        # Experience calculation - based on required years
         if parsed_data["Total Experience (Years)"] != "Not Available":
             try:
                 candidate_exp = float(parsed_data["Total Experience (Years)"])
-                scores["experience"] = min((candidate_exp / required_experience) * 100, 100)
+                # More nuanced experience score:
+                # - Below required: proportional score up to 70%
+                # - At required: 80%
+                # - Above required: bonus points up to 100%
+                if candidate_exp < required_experience:
+                    scores["experience"] = min((candidate_exp / required_experience) * 70, 70)
+                elif candidate_exp == required_experience:
+                    scores["experience"] = 80
+                else:
+                    # Additional experience gives bonus points, with diminishing returns
+                    bonus = min(((candidate_exp - required_experience) / 2) * 20, 20)
+                    scores["experience"] = 80 + bonus
             except ValueError:
                 scores["experience"] = 0
         else:
             scores["experience"] = 0
             
+        # Job stability - how long candidates typically stay at jobs
         if parsed_data["Job Stability"] != "Not Available":
             try:
                 job_stability = float(parsed_data["Job Stability"])
-                if job_stability <= 10:
-                    avg_tenure = (job_stability / 10) * 4
-                else:
-                    avg_tenure = job_stability
-                
-                scores["stability"] = min((avg_tenure / stability_threshold) * 100, 100)
+                if job_stability <= 10:  # If rated on 1-10 scale
+                    scores["stability"] = job_stability * 10  # Convert to 100-point scale
+                else:  # If provided as average years
+                    # Convert years to score: 
+                    # - Less than 1 year: proportional score up to 50
+                    # - 1-2 years: 50-85
+                    # - 2+ years: 85-100
+                    if job_stability < 1:
+                        scores["stability"] = (job_stability * 50)
+                    elif job_stability < 2:
+                        scores["stability"] = 50 + ((job_stability - 1) * 35)
+                    else:
+                        scores["stability"] = 85 + min(((job_stability - 2) * 7.5), 15)
             except ValueError:
                 scores["stability"] = 0
         else:
             scores["stability"] = 0
             
+        # College rating score
         if parsed_data["College Rating"] != "Not Available":
             if "premium" in parsed_data["College Rating"].lower() and "non" not in parsed_data["College Rating"].lower():
                 scores["college"] = 100
@@ -143,50 +152,74 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         else:
             scores["college"] = 20
             
+        # Leadership score - binary based on presence of leadership experience
         if parsed_data["Leadership Skills"] != "Not Available":
-            if any(word in parsed_data["Leadership Skills"].lower() for word in 
-                   ["led", "managed", "directed", "leadership", "head", "team lead"]):
+            leadership_keywords = ["led", "managed", "directed", "leadership", "head", "team lead", 
+                                "supervisor", "manager", "chief", "director", "lead"]
+            
+            if any(word in parsed_data["Leadership Skills"].lower() for word in leadership_keywords):
                 scores["leadership"] = 100
             else:
-                scores["leadership"] = 0
+                # Check for partial leadership indicators
+                partial_leadership = ["coordinated", "facilitated", "organized", "spearheaded", "guided"]
+                if any(word in parsed_data["Leadership Skills"].lower() for word in partial_leadership):
+                    scores["leadership"] = 50
+                else:
+                    scores["leadership"] = 0
         else:
             scores["leadership"] = 0
             
+        # International experience score
         if parsed_data["International Team Experience"] != "Not Available":
-            if any(word in parsed_data["International Team Experience"].lower() for word in 
-                   ["yes", "international", "global", "worldwide", "multinational"]):
-                scores["international"] = 100
+            international_keywords = ["yes", "international", "global", "worldwide", "multinational", 
+                                    "cross-border", "overseas", "remote teams", "offshore"]
+            
+            if any(word in parsed_data["International Team Experience"].lower() for word in international_keywords):
+                # Look for deeper international experience
+                deep_int_exp = ["led international", "managed global", "cross-cultural", "multiple countries"]
+                if any(phrase in parsed_data["International Team Experience"].lower() for phrase in deep_int_exp):
+                    scores["international"] = 100
+                else:
+                    scores["international"] = 80
             else:
                 scores["international"] = 0
         else:
             scores["international"] = 0
             
+        # Competitor experience score - more nuanced based on specific competitors
         if parsed_data["Competitor Experience"] != "Not Available":
             if parsed_data["Competitor Experience"].lower().startswith("yes"):
-                if any(word in parsed_data["Competitor Experience"].lower() for word in 
-                       ["anaplan", "workday", "oracle", "sap"]):
+                # Premium competitors get higher scores
+                premium_competitors = ["anaplan", "workday", "oracle", "sap", "onestream"]
+                if any(comp in parsed_data["Competitor Experience"].lower() for comp in premium_competitors):
                     scores["competitor"] = 100
                 else:
-                    scores["competitor"] = 50
+                    scores["competitor"] = 70
             else:
                 scores["competitor"] = 0
         else:
             scores["competitor"] = 0
             
+        # Calculate weighted overall score with adjusted weights
         overall_score = (
-            (0.40 * scores["relevancy"]) +
-            (0.15 * scores["experience"]) +
-            (0.10 * scores["stability"]) +
-            (0.10 * scores["college"]) +
-            (0.10 * scores["leadership"]) +
-            (0.10 * scores["international"]) +
-            (0.05 * scores["competitor"])
+            (0.40 * scores["relevancy"]) +        # Skills relevancy is most important
+            (0.15 * scores["experience"]) +        # Years of experience
+            (0.12 * scores["stability"]) +         # Job stability slightly more important
+            (0.10 * scores["college"]) +           # Education background
+            (0.10 * scores["leadership"]) +        # Leadership abilities
+            (0.08 * scores["international"]) +     # International experience slightly less weight
+            (0.05 * scores["competitor"])          # Competitor experience
         )
         
-        if overall_score >= 80:
-            recommendation = "Strong Fit ✅ - Call for interview"
-        elif overall_score >= 60:
+        # Enhanced recommendation categories
+        if overall_score >= 85:
+            recommendation = "Strong Fit ✅ - Priority interview"
+        elif overall_score >= 70:
+            recommendation = "Good Fit ✅ - Recommend interview"
+        elif overall_score >= 55:
             recommendation = "Consider 🤔 - Further screening needed"
+        elif overall_score >= 40:
+            recommendation = "Weak Fit ⚠️ - Only interview if candidate pool is limited"
         else:
             recommendation = "Reject ❌ - Does not meet minimum criteria"
             
@@ -198,22 +231,28 @@ def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
         st.error(traceback.format_exc())
         return 0, "Error in calculation", {}
 
-# Call AI model to analyze resume with enhanced evaluation attributes
+# Call AI model to analyze resume with enhanced evaluation focus on skills matching
 def analyze_resume(client, resume_text, job_description):
     competitors = get_planful_competitors()
     competitors_list = ", ".join(competitors)
     
     prompt = f"""
-    As an expert resume analyzer, review the following resume against the job description.
+    As an expert HR consultant and resume analyzer, carefully review the following resume against the job description.
+    Focus on precise skills matching between the job requirements and candidate qualifications.
+    
     Provide a structured analysis with EXACT labeled fields as follows:
     
     Candidate Name: [Extract full name]
-    Total Experience (Years): [Calculate years from earliest job to latest or current]
-    Relevancy Score (0-100): [Score based on overall match]
-    Strong Matches Score: [Score for exact skill matches]
-    Strong Matches Reasoning: [Explain strong matches]
-    Partial Matches Score: [Score for related skills]
-    Partial Matches Reasoning: [Explain partial matches]
+    Total Experience (Years): [Calculate years from earliest job to latest]
+    
+    Strong Matches Score (0-100): [Score ONLY for EXACT skill/requirement matches between the job description and resume]
+    Strong Matches Reasoning: [List all exact matches, be specific (e.g., "AWS required in JD and candidate has 3 years AWS experience")]
+    
+    Partial Matches Score (0-100): [Score for RELATED but not exact skills (e.g., JD requires AWS but candidate has GCP experience)]
+    Partial Matches Reasoning: [List all partial/transferable skill matches with clear explanations]
+    
+    Relevancy Score (0-100): [This should be a weighted calculation: 70% of Strong Matches + 30% of Partial Matches]
+    
     All Tech Skills: [List ALL technical skills]
     Relevant Tech Skills: [List only skills relevant to job]
     Degree: [Highest degree only]
@@ -222,16 +261,15 @@ def analyze_resume(client, resume_text, job_description):
     College Rating: [Rate as "Premium" or "Non-Premium"]
     Job Stability: [Rate 1-10, give 10 if ≥2 years per job]
     Latest Company: [Most recent employer]
-    Leadership Skills: [Describe leadership experience]
-    International Team Experience: [Yes/No + details about working with teams outside India]
+    Leadership Skills: [Describe leadership experience in detail]
+    International Team Experience: [Yes/No + details about working with global teams]
     Notice Period: [Extract notice period info or "Immediate Joiner"]
-    LinkedIn URL: [Extract LinkedIn profile URL if present, otherwise leave blank]
-    Portfolio URL: [Extract any portfolio, GitHub, or personal website URL if present, otherwise leave blank]
+    LinkedIn URL: [Extract LinkedIn profile URL if present]
+    Portfolio URL: [Extract any portfolio, GitHub, or personal website URL if present]
     Work History: [List all previous companies and roles]
     Competitor Experience: [Yes/No. Check if resume mentions experience at any of these companies: {competitors_list}]
     
     Use EXACTLY these field labels in your response, followed by your analysis.
-    DO NOT use any markdown formatting in your response.
     
     Resume:
     {resume_text}
@@ -244,24 +282,19 @@ def analyze_resume(client, resume_text, job_description):
         response = client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
-                {"role": "system", "content": "You are an expert resume analyzer. Your task is to extract and analyze key information from resumes against job descriptions. Format your response as a simple list of key-value pairs with NO markdown formatting."},
+                {"role": "system", "content": "You are an expert HR consultant specializing in resume analysis. Your task is to extract and analyze key information from resumes against job descriptions, with special focus on accurate skills matching. Format your response as a list of key-value pairs."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.5,
+            temperature=0.3,  # Lower temperature for more consistent responses
             max_tokens=3000
         )
         ai_response = response.choices[0].message.content
-        
-        # Debugging: Show AI response in Streamlit
-        with st.expander("AI Response Output (Debugging)"):
-            st.text_area("Raw AI Response", ai_response, height=300)
-        
         return ai_response
     except Exception as e:
         st.error(f"Error during analysis: {str(e)}")
         return None
 
-# Clean text by removing markdown and other formatting
+# Clean text by removing formatting
 def clean_text(text):
     if not text or text == "Not Available":
         return text
@@ -279,7 +312,7 @@ def clean_text(text):
     
     return text.strip()
 
-# Manually check for competitor mentions in work history
+# Check for competitor mentions in work history
 def check_competitor_experience(work_history, competitor_list):
     if not work_history or work_history == "Not Available":
         return "No"
@@ -290,7 +323,7 @@ def check_competitor_experience(work_history, competitor_list):
     
     return "No"
 
-# Parse AI response using improved key-value extraction
+# Parse AI response with improved extraction logic
 def parse_analysis(analysis, resume_text=None):
     try:
         # Definition of expected fields with exact matches and alternative formats
@@ -403,33 +436,19 @@ def parse_analysis(analysis, resume_text=None):
                 if len(result["International Team Experience"]) < 5:  # Just "No" or similar
                     result["International Team Experience"] = "No"
         
-        # Handle LinkedIn URL extraction with improved method
-        if resume_text:
-            if result["LinkedIn URL"] != "Not Available":
-                linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
-                if linkedin_match:
-                    result["LinkedIn URL"] = linkedin_match.group(0)
-                else:
-                    extracted_url = extract_linkedin_url(result["LinkedIn URL"])
-                    if extracted_url:
-                        result["LinkedIn URL"] = extracted_url
-                    else:
-                        result["LinkedIn URL"] = extract_linkedin_url(resume_text)
+        # Handle LinkedIn URL extraction
+        if resume_text and (result["LinkedIn URL"] == "Not Available" or not result["LinkedIn URL"]):
+            result["LinkedIn URL"] = extract_linkedin_url(resume_text)
+        elif result["LinkedIn URL"] != "Not Available":
+            linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
+            if linkedin_match:
+                result["LinkedIn URL"] = linkedin_match.group(0)
             else:
-                result["LinkedIn URL"] = extract_linkedin_url(resume_text)
-        else:
-            if result["LinkedIn URL"] != "Not Available":
-                linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/\S+', result["LinkedIn URL"])
-                if linkedin_match:
-                    result["LinkedIn URL"] = linkedin_match.group(0)
-                else:
-                    linked_in_text = result["LinkedIn URL"].lower()
-                    if any(phrase in linked_in_text for phrase in ["not available", "not mentioned", "not found", "no linkedin"]):
-                        result["LinkedIn URL"] = ""
-            else:
-                result["LinkedIn URL"] = ""
+                extracted_url = extract_linkedin_url(result["LinkedIn URL"])
+                if extracted_url:
+                    result["LinkedIn URL"] = extracted_url
         
-        # For Portfolio URL - use more specific extraction
+        # Clean up Portfolio URL
         if result["Portfolio URL"] != "Not Available":
             portfolio_match = re.search(r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|behance\.net|dribbble\.com|[\w-]+\.(?:com|io|org|net))/\S+', result["Portfolio URL"])
             if portfolio_match:
@@ -439,15 +458,19 @@ def parse_analysis(analysis, resume_text=None):
         else:
             result["Portfolio URL"] = ""
         
+        # Use Latest Company if Work History is not available
         if result["Work History"] == "Not Available" and "Latest Company" in result and result["Latest Company"] != "Not Available":
             result["Work History"] = result["Latest Company"]
 
+        # Double-check Competitor Experience with work history
         if result["Competitor Experience"] == "Not Available" or not any(word in result["Competitor Experience"].lower() for word in ["yes", "no"]):
             result["Competitor Experience"] = check_competitor_experience(result["Work History"], get_planful_competitors())
             
+        # Clean all text fields
         for field in result:
             result[field] = clean_text(result[field])
             
+        # Calculate overall score
         required_experience = 3
         stability_threshold = 2
         
@@ -456,16 +479,7 @@ def parse_analysis(analysis, resume_text=None):
         result["Overall Weighted Score"] = str(round(overall_score, 2))
         result["Selection Recommendation"] = recommendation
         
-        with st.expander("Extracted Data (Debugging)"):
-            st.write("### Extracted Fields")
-            for k, v in result.items():
-                st.write(f"{k}: {v}")
-                
-            st.write("### Individual Scores")
-            for k, v in individual_scores.items():
-                st.write(f"{k}: {round(v, 2)}")
-        
-        # Return the entire result dictionary
+        # Return the results dictionary
         return result
     
     except Exception as e:
@@ -474,7 +488,7 @@ def parse_analysis(analysis, resume_text=None):
         st.error(traceback.format_exc())
         return None
 
-# Format Excel with nice styling and organization
+# Format Excel with styling and organization
 def format_excel_workbook(wb, columns):
     ws = wb.active
     
@@ -538,10 +552,12 @@ def format_excel_workbook(wb, columns):
                     cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
             
             if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
-                if "Strong Fit" in str(cell.value):
+                if "Strong Fit" in str(cell.value) or "Good Fit" in str(cell.value):
                     cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
                 elif "Consider" in str(cell.value):
                     cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                elif "Weak Fit" in str(cell.value):
+                    cell.fill = PatternFill(start_color='FFD700', end_color='FFD700', fill_type='solid')  # Orange
                 elif "Reject" in str(cell.value):
                     cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
             
@@ -570,29 +586,27 @@ def format_excel_workbook(wb, columns):
 # Main Streamlit App
 def main():
     st.title("📝 Enhanced Resume Analyzer")
-    st.markdown("Built using the standardized resume scoring algorithm")
+    st.markdown("Built with AI-powered skill matching and scoring")
     
     with st.sidebar:
         st.title("Scoring Algorithm")
         st.markdown("""
         ### Overall Score Formula
-        - 40% × Relevancy Score 
+        - 40% × Relevancy Score (70% Strong + 30% Partial Matches)
         - 15% × Experience Score
-        - 10% × Job Stability Score
+        - 12% × Job Stability Score
         - 10% × College Rating
         - 10% × Leadership Score
-        - 10% × International Experience
+        - 8% × International Experience
         - 5% × Competitor Experience
         
         ### Selection Categories
-        - **Strong Fit (80-100) ✅**: Call for an interview
-        - **Consider (60-79) 🤔**: Further screening needed
-        - **Reject (0-59) ❌**: Does not meet minimum criteria
+        - **Strong Fit (85-100) ✅**: Priority interview
+        - **Good Fit (70-84) ✅**: Recommend interview
+        - **Consider (55-69) 🤔**: Further screening needed
+        - **Weak Fit (40-54) ⚠️**: Interview if candidate pool is limited
+        - **Reject (0-39) ❌**: Does not meet minimum criteria
         """)
-        
-        st.markdown("---")
-        st.markdown("### About This App")
-        st.write("This app analyzes resumes against job descriptions using AI and provides a scoring system based on various criteria.")
     
     load_dotenv()
     
@@ -638,8 +652,26 @@ def main():
         # Create DataFrame with the extracted data
         df = pd.DataFrame(results_data)
         
-        # Define the expected columns - all columns should now be available
+        # Define the key columns for display in the UI
         display_columns = [
+            "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
+            "Strong Matches Score", "Partial Matches Score", "Overall Weighted Score",
+            "College Rating", "Job Stability", "Latest Company",
+            "Leadership Skills", "International Team Experience",
+            "Competitor Experience", "Selection Recommendation"
+        ]
+        
+        # Show all columns that exist in our dataframe
+        available_columns = [col for col in display_columns if col in df.columns]
+        
+        if available_columns:
+            st.dataframe(df[available_columns])
+        else:
+            st.warning("No columns to display. Please check the AI response format.")
+            st.write("DataFrame columns:", df.columns.tolist())
+        
+        # For the Excel export, we want all columns
+        export_columns = [
             "Candidate Name", "Total Experience (Years)", "Relevancy Score (0-100)", 
             "Strong Matches Score", "Strong Matches Reasoning", "Partial Matches Score",
             "Partial Matches Reasoning", "All Tech Skills", "Relevant Tech Skills",
@@ -650,39 +682,37 @@ def main():
             "Overall Weighted Score", "Selection Recommendation"
         ]
         
-        # Show all columns that exist in our dataframe
-        available_columns = [col for col in display_columns if col in df.columns]
-        
-        if available_columns:
-            st.dataframe(df[available_columns])
-        else:
-            st.warning("No columns to display. Debug info:")
-            st.write("DataFrame columns:", df.columns.tolist())
-            st.write("Expected columns:", display_columns)
+        # Available export columns
+        available_export_columns = [col for col in export_columns if col in df.columns]
         
         with st.spinner("Preparing Excel file..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
-                # Make sure we're saving the dataframe as is, with all columns
-                df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
+                # Make sure we're saving the dataframe with all available columns
+                if available_export_columns:
+                    export_df = df[available_export_columns]
+                else:
+                    export_df = df  # Use all columns if our expected ones aren't found
+                
+                export_df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
                 wb = openpyxl.load_workbook(tmpfile.name)
                 
-                if available_columns:
-                    wb = format_excel_workbook(wb, available_columns)
+                if available_export_columns:
+                    wb = format_excel_workbook(wb, available_export_columns)
                 else:
-                    # If no display columns, use whatever columns are in the dataframe
+                    # If no expected columns, use whatever columns are in the dataframe
                     wb = format_excel_workbook(wb, df.columns.tolist())
                 
                 wb.save(tmpfile.name)
                 tmpfile_path = tmpfile.name
             
-            st.success("Excel file created successfully with all requested evaluation metrics!")
+            st.success("Excel report ready!")
             
             with open(tmpfile_path, "rb") as file:
                 file_data = file.read()
                 st.download_button(
-                    label="📥 Download Comprehensive Excel Report",
+                    label="📥 Download Complete Resume Analysis Report",
                     data=file_data,
-                    file_name=f"enhanced_resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
