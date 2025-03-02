@@ -368,11 +368,12 @@ def check_competitor_experience(work_history, competitor_list):
     
     return ""
 
-# Manually assign skills match scores if AI didn't provide them
+# Improved calculate_skills_scores function with detailed reasoning
 def calculate_skills_scores(resume_text, job_description):
-    # This is a fallback if the AI didn't provide scores
-    # We'll do a simple keyword matching as backup
-    
+    """
+    Provides detailed reasoning for skill matches and scores when the AI fallback is used.
+    Returns strong score, partial score, and detailed reasoning for both.
+    """
     # Normalize text for comparison
     resume_lower = resume_text.lower()
     jd_lower = job_description.lower()
@@ -387,26 +388,115 @@ def calculate_skills_scores(resume_text, job_description):
         "excel", "powerbi", "tableau", "power bi", "data visualization",
         "agile", "scrum", "jira", "project management", "pmp",
         "linux", "unix", "windows", "git", "github", "gitlab",
-        "api", "rest", "graphql", "microservices", "serverless"
+        "api", "rest", "graphql", "microservices", "serverless",
+        # Common business and finance skills
+        "financial analysis", "budgeting", "forecasting", "accounting",
+        "strategic planning", "business development", "marketing", "sales",
+        "customer relationship management", "crm", "sap", "erp",
+        # Common soft skills
+        "communication", "leadership", "teamwork", "problem solving",
+        "critical thinking", "time management", "organization"
     ]
     
-    # Extract skills from job description
-    jd_skills = [skill for skill in common_skills if skill in jd_lower]
+    # Define related skills (skills that are similar or related to each other)
+    related_skills = {
+        "python": ["django", "flask", "pandas", "numpy", "data science", "machine learning", "AI"],
+        "java": ["spring", "hibernate", "j2ee", "android"],
+        "javascript": ["typescript", "node.js", "react", "angular", "vue", "front-end"],
+        "sql": ["mysql", "postgresql", "oracle", "database", "data analysis"],
+        "aws": ["cloud", "azure", "gcp", "devops", "infrastructure"],
+        "docker": ["kubernetes", "containers", "devops", "microservices"],
+        "tableau": ["power bi", "data visualization", "analytics", "reporting"],
+        "excel": ["spreadsheets", "data analysis", "financial modeling"],
+        "agile": ["scrum", "kanban", "jira", "project management"],
+        "machine learning": ["ai", "data science", "deep learning", "nlp"],
+    }
     
-    # Count exact matches
-    exact_matches = [skill for skill in jd_skills if skill in resume_lower]
+    # Find all skills mentioned in the job description
+    jd_skills = []
+    for skill in common_skills:
+        # Use word boundaries to ensure we're matching whole words
+        pattern = r'\b' + re.escape(skill) + r'\b'
+        if re.search(pattern, jd_lower):
+            jd_skills.append(skill)
     
-    # Simple scoring
+    # Find exact matches in the resume
+    exact_matches = []
+    for skill in jd_skills:
+        pattern = r'\b' + re.escape(skill) + r'\b'
+        if re.search(pattern, resume_lower):
+            exact_matches.append(skill)
+    
+    # Find related matches
+    related_matches = []
+    for jd_skill in jd_skills:
+        if jd_skill in exact_matches:
+            continue  # Skip if already an exact match
+            
+        # Check if any related skills are in the resume
+        if jd_skill in related_skills:
+            for related_skill in related_skills[jd_skill]:
+                pattern = r'\b' + re.escape(related_skill.lower()) + r'\b'
+                if re.search(pattern, resume_lower) and related_skill.lower() not in [match.lower() for match in exact_matches]:
+                    related_matches.append(f"{related_skill} (related to {jd_skill})")
+    
+    # Additional resume skills that might be transferable
+    additional_resume_skills = []
+    for skill in common_skills:
+        if skill not in jd_skills:  # Don't include skills already counted
+            pattern = r'\b' + re.escape(skill) + r'\b'
+            if re.search(pattern, resume_lower):
+                for jd_skill in jd_skills:
+                    if skill in related_skills.get(jd_skill, []) or jd_skill in related_skills.get(skill, []):
+                        related_match = f"{skill} (transferable to {jd_skill})"
+                        if related_match not in related_matches:
+                            related_matches.append(related_match)
+    
+    # Calculate scores
     if not jd_skills:  # No skills found in JD
         strong_score = 50  # Default middle score
+        strong_reasoning = "No specific technical skills identified in the job description. Using default middle score."
     else:
         strong_score = (len(exact_matches) / len(jd_skills)) * 100
+        strong_reasoning = f"Found {len(exact_matches)} exact matches out of {len(jd_skills)} required skills ({strong_score:.1f}%).\n\n"
+        strong_reasoning += "Exact skill matches:\n"
+        
+        if exact_matches:
+            for skill in exact_matches:
+                strong_reasoning += f"- {skill.upper()}: Found in both resume and job description\n"
+        else:
+            strong_reasoning += "- No exact skill matches found\n"
+        
+        strong_reasoning += f"\nMissing skills from job description:\n"
+        for skill in jd_skills:
+            if skill not in exact_matches:
+                strong_reasoning += f"- {skill}\n"
     
-    # Related skills (this is very simplified)
-    # In a real implementation, you'd want a more sophisticated mapping of related skills
-    partial_score = max(30, min(70, strong_score * 0.8))  # Just a rough estimate
+    # Related skills score - calculate based on the number of related matches
+    max_related_score = min(80, strong_score + 20)  # Cap at 80 or 20% higher than strong
+    min_related_score = max(30, strong_score * 0.6)  # Floor at 30 or 60% of strong
     
-    return round(strong_score), round(partial_score)
+    if related_matches:
+        # Scale the related score based on the number of related matches relative to missing skills
+        missing_skills_count = len(jd_skills) - len(exact_matches)
+        if missing_skills_count > 0:
+            related_coverage = min(1.0, len(related_matches) / missing_skills_count)
+            partial_score = min_related_score + (max_related_score - min_related_score) * related_coverage
+        else:
+            partial_score = max_related_score
+    else:
+        partial_score = min_related_score
+    
+    partial_reasoning = f"Found {len(related_matches)} related/transferable skills ({partial_score:.1f}%).\n\n"
+    partial_reasoning += "Related skill matches:\n"
+    
+    if related_matches:
+        for skill in related_matches:
+            partial_reasoning += f"- {skill}\n"
+    else:
+        partial_reasoning += "- No related skill matches found\n"
+    
+    return round(strong_score), round(partial_score), strong_reasoning, partial_reasoning
 
 # Parse AI response with improved extraction logic
 def parse_analysis(analysis, resume_text=None, job_description=None):
@@ -522,12 +612,12 @@ def parse_analysis(analysis, resume_text=None, job_description=None):
         if (result["Strong Matches Score"] == "Not Available" or result["Strong Matches Score"] == "0") and \
            (result["Partial Matches Score"] == "Not Available" or result["Partial Matches Score"] == "0") and \
            resume_text and job_description:
-            # Manually calculate scores as fallback
-            strong_score, partial_score = calculate_skills_scores(resume_text, job_description)
+            # Manually calculate scores as fallback with detailed reasoning
+            strong_score, partial_score, strong_reasoning, partial_reasoning = calculate_skills_scores(resume_text, job_description)
             result["Strong Matches Score"] = str(strong_score)
             result["Partial Matches Score"] = str(partial_score)
-            result["Strong Matches Reasoning"] = "Score calculated through keyword matching"
-            result["Partial Matches Reasoning"] = "Score estimated through related skills analysis"
+            result["Strong Matches Reasoning"] = strong_reasoning
+            result["Partial Matches Reasoning"] = partial_reasoning
         
         # Normalize College Rating
         if result["College Rating"] != "Not Available":
@@ -863,6 +953,16 @@ def main():
                                     
                                     # Success message with timing information
                                     st.success(f"Successfully analyzed {uploaded_file.name} in {resume_time:.2f} seconds")
+                                    
+                                    # Add an expander to show the skill match reasoning
+                                    with st.expander("View Skill Matching Details", expanded=False):
+                                        st.markdown("### Strong Matches")
+                                        st.markdown(f"**Score: {parsed_data['Strong Matches Score']}**")
+                                        st.markdown(parsed_data["Strong Matches Reasoning"])
+                                        
+                                        st.markdown("### Partial Matches")
+                                        st.markdown(f"**Score: {parsed_data['Partial Matches Score']}**")
+                                        st.markdown(parsed_data["Partial Matches Reasoning"])
                                 else:
                                     st.warning(f"Could not extract structured data for {uploaded_file.name}")
                         else:
