@@ -211,7 +211,7 @@ def main_analysis_tab():
                         timing_df["Percentage"] = (timing_df["Total Time (sec)"] / st.session_state.total_processing_time * 100).round(1).astype(str) + '%'
                         st.table(timing_df)
         
-        # Modify this part to use session state data
+        # Display results data
         if st.session_state.results_data:
             st.subheader("Analysis Results")
             
