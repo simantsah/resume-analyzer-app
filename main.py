@@ -800,6 +800,9 @@ def format_excel_workbook(wb, columns):
         ws.freeze_panes = "A2"
         
         return wb
+
+if __name__ == "__main__":
+    main()
     except Exception as e:
         st.error(f"Error formatting Excel: {str(e)}")
         # Return the unformatted workbook as fallback
@@ -1185,9 +1188,14 @@ def parse_analysis(analysis, resume_text=None, job_description=None):
         if (result["Strong Matches Score"] == "Not Available" or result["Strong Matches Score"] == "0") and \
            (result["Partial Matches Score"] == "Not Available" or result["Partial Matches Score"] == "0") and \
            resume_text and job_description:
-            # Manually calculate scores as fallback with detailed reasoning
-            strong_score, partial_score, strong_reasoning, partial_reasoning = calculate_skills_scores(resume_text, job_description)
-            result["Strong Matches Score"] = str(strong_score)
-            result["Partial Matches Score"] = str(partial_score)
-            result["Strong Matches Reasoning"] = strong_reasoning
-            result["Partial Matches Reasoning"] = partial_reasoning
+            try:
+                # Manually calculate scores as fallback with detailed reasoning
+                strong_score, partial_score, strong_reasoning, partial_reasoning = calculate_skills_scores(resume_text, job_description)
+                result["Strong Matches Score"] = str(strong_score)
+                result["Partial Matches Score"] = str(partial_score)
+                result["Strong Matches Reasoning"] = strong_reasoning
+                result["Partial Matches Reasoning"] = partial_reasoning
+            except Exception as e:
+                st.error(f"Error calculating fallback scores: {str(e)}")
+                result["Strong Matches Score"] = "50"  # Default value
+                result["Partial Matches Score"] = "30"  # Default value
