@@ -1,22 +1,386 @@
-# Main Streamlit App
-def main():
-    st.set_page_config(page_title="Resume Analyzer", layout="wide", initial_sidebar_state="expanded")
+import streamlit as st
+import pandas as pd
+import PyPDF2
+import os
+import re
+import tempfile
+import openpyxl
+import time
+import plotly.express as px
+from io import BytesIO
+from datetime import datetime
+from dotenv import load_dotenv
+from groq import Groq
+
+# Initialize AI client
+def initialize_groq_client():
+    try:
+        return Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    except Exception as e:
+        st.error(f"Failed to initialize Groq client: {str(e)}")
+        return None
+
+# Extract text from PDF
+def extract_text_from_pdf(pdf_file):
+    try:
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        text = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
+        return text if text else None
+    except Exception as e:
+        st.error(f"Error extracting text from PDF: {str(e)}")
+        return None
+
+# Define Planful competitors
+def get_planful_competitors():
+    return [
+        "Anaplan", "Workday Adaptive Planning", "Oracle EPM", "Oracle Hyperion", 
+        "SAP BPC", "IBM Planning Analytics", "TM1", "Prophix", "Vena Solutions", 
+        "Jedox", "OneStream", "Board", "Centage", "Solver", "Kepion", "Host Analytics",
+        "CCH Tagetik", "Infor CPM", "Syntellis", "Longview"
+    ]
+
+# Extract LinkedIn URL directly from resume text
+def extract_linkedin_url(text):
+    if not text:
+        return ""
     
-    # Create tabs for different views
-    tab1, tab2 = st.tabs(["Resume Analysis", "Candidates Dashboard"])
+    patterns = [
+        r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'www\.linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
+        r'linkedin:\s*https?://(?:www\.)?linkedin\.com/in/[\w-]+',
+    ]
     
-    with tab1:
-        st.title("📝 Enhanced Resume Analyzer")
-        st.markdown("Built with AI-powered skill matching and scoring")
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        if matches:
+            url = matches[0]
+            if not url.startswith('http'):
+                url = 'https://' + ('' if url.startswith('www.') or url.startswith('linkedin.com') else 'www.') + url
+                if url.startswith('https://linkedin.com'):
+                    url = url.replace('https://linkedin.com', 'https://www.linkedin.com')
+            url = re.sub(r'[.,;:)\s]+$', '', url)
+            return url
+    
+    linkedin_mention = re.search(r'linkedin[\s:]*([^\s]+)', text, re.IGNORECASE)
+    if linkedin_mention:
+        potential_url = linkedin_mention.group(1)
+        if '.' in potential_url and '/' in potential_url:
+            url = re.sub(r'[.,;:)\s]+$', '', potential_url)
+            if not url.startswith('http'):
+                url = 'https://' + ('' if url.startswith('www.') else 'www.') + url
+            return url
+    
+    return ""
+
+# Extract phone number from resume text
+def extract_phone_number(text):
+    if not text:
+        return "Not Available"
+    
+    # Common phone number patterns
+    patterns = [
+        r'\b(?:\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b',  # (123) 456-7890, 123-456-7890
+        r'\b\d{10}\b',  # 1234567890
+        r'\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b',  # 123-456-7890, 123.456.7890
+        r'\b\+\d{1,3}\s?\d{6,14}\b'  # International format: +1 1234567890
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        if matches:
+            return matches[0]
+    
+    return "Not Available"
+
+# Calculate the individual scores and overall score based on the improved algorithm
+def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
+    try:
+        scores = {}
         
-        # Original app functionality
-        main_analysis_tab()
-    
-    with tab2:
-        st.title("📊 Candidates Dashboard")
-        st.markdown("Overview of all analyzed candidates")
+        # Strong Matches Score - direct from the AI analysis of exact skill matches
+        strong_matches_val = parsed_data.get("Strong Matches Score", "0")
+        try:
+            scores["strong_matches"] = float(strong_matches_val)
+        except (ValueError, TypeError):
+            scores["strong_matches"] = 0
+            
+        # Partial Matches Score - direct from the AI analysis of related skills
+        partial_matches_val = parsed_data.get("Partial Matches Score", "0")
+        try:
+            scores["partial_matches"] = float(partial_matches_val)
+        except (ValueError, TypeError):
+            scores["partial_matches"] = 0
+            
+        # Calculate relevancy score as a weighted sum of strong and partial matches
+        # Give more weight to strong matches (70%) than partial matches (30%)
+        weighted_strong = scores["strong_matches"] * 0.7
+        weighted_partial = scores["partial_matches"] * 0.3
         
-        dashboard_tab()
+        # Final relevancy score is the sum of weighted strong and partial matches
+        scores["relevancy"] = min(weighted_strong + weighted_partial, 100)
+        
+        # Update the parsed data with our calculated relevancy score
+        parsed_data["Relevancy Score (0-100)"] = str(round(scores["relevancy"], 1))
+        
+        # Experience calculation - based on required years
+        experience_val = parsed_data.get("Total Experience (Years)", "0")
+        try:
+            candidate_exp = float(experience_val)
+            # More nuanced experience score:
+            # - Below required: proportional score up to 70%
+            # - At required: 80%
+            # - Above required: bonus points up to 100%
+            if candidate_exp < required_experience:
+                scores["experience"] = min((candidate_exp / required_experience) * 70, 70)
+            elif candidate_exp == required_experience:
+                scores["experience"] = 80
+            else:
+                # Additional experience gives bonus points, with diminishing returns
+                bonus = min(((candidate_exp - required_experience) / 2) * 20, 20)
+                scores["experience"] = 80 + bonus
+        except (ValueError, TypeError):
+            scores["experience"] = 0
+            
+        # Job stability - how long candidates typically stay at jobs
+        stability_val = parsed_data.get("Job Stability", "0")
+        try:
+            job_stability = float(stability_val)
+            if job_stability <= 10:  # If rated on 1-10 scale
+                scores["stability"] = job_stability * 10  # Convert to 100-point scale
+            else:  # If provided as average years
+                # Convert years to score: 
+                # - Less than 1 year: proportional score up to 50
+                # - 1-2 years: 50-85
+                # - 2+ years: 85-100
+                if job_stability < 1:
+                    scores["stability"] = (job_stability * 50)
+                elif job_stability < 2:
+                    scores["stability"] = 50 + ((job_stability - 1) * 35)
+                else:
+                    scores["stability"] = 85 + min(((job_stability - 2) * 7.5), 15)
+        except (ValueError, TypeError):
+            scores["stability"] = 0
+            
+        # College rating score
+        college_rating = parsed_data.get("College Rating", "")
+        if college_rating:
+            if "premium" in college_rating.lower() and "non" not in college_rating.lower():
+                scores["college"] = 100
+            elif "non-premium" in college_rating.lower():
+                scores["college"] = 70
+            else:
+                scores["college"] = 40
+        else:
+            scores["college"] = 20
+            
+        # Leadership score - based on presence of leadership experience
+        leadership_skills = parsed_data.get("Leadership Skills", "")
+        if leadership_skills:
+            leadership_keywords = ["led", "managed", "directed", "leadership", "head", "team lead", 
+                                "supervisor", "manager", "chief", "director", "lead"]
+            
+            if any(word in leadership_skills.lower() for word in leadership_keywords):
+                scores["leadership"] = 100
+            else:
+                # Check for partial leadership indicators
+                partial_leadership = ["coordinated", "facilitated", "organized", "spearheaded", "guided"]
+                if any(word in leadership_skills.lower() for word in partial_leadership):
+                    scores["leadership"] = 50
+                else:
+                    scores["leadership"] = 0
+        else:
+            scores["leadership"] = 0
+            
+        # International experience score
+        international_exp = parsed_data.get("International Team Experience", "")
+        if international_exp:
+            international_keywords = ["yes", "international", "global", "worldwide", "multinational", 
+                                    "cross-border", "overseas", "remote teams", "offshore"]
+            
+            if any(word in international_exp.lower() for word in international_keywords):
+                # Look for deeper international experience
+                deep_int_exp = ["led international", "managed global", "cross-cultural", "multiple countries"]
+                if any(phrase in international_exp.lower() for phrase in deep_int_exp):
+                    scores["international"] = 100
+                else:
+                    scores["international"] = 80
+            else:
+                scores["international"] = 0
+        else:
+            scores["international"] = 0
+            
+        # Competitor experience score - more nuanced based on specific competitors
+        competitor_exp = parsed_data.get("Competitor Experience", "")
+        if competitor_exp and competitor_exp.lower().startswith("yes"):
+            # Premium competitors get higher scores
+            premium_competitors = ["anaplan", "workday", "oracle", "sap", "onestream"]
+            if any(comp in competitor_exp.lower() for comp in premium_competitors):
+                scores["competitor"] = 100
+            else:
+                scores["competitor"] = 70
+        else:
+            scores["competitor"] = 0
+            
+        # Calculate weighted overall score with adjusted weights
+        overall_score = (
+            (0.40 * scores["relevancy"]) +        # Skills relevancy is most important
+            (0.15 * scores["experience"]) +       # Years of experience
+            (0.12 * scores["stability"]) +        # Job stability slightly more important
+            (0.10 * scores["college"]) +          # Education background
+            (0.10 * scores["leadership"]) +       # Leadership abilities
+            (0.08 * scores["international"]) +    # International experience slightly less weight
+            (0.05 * scores["competitor"])         # Competitor experience
+        )
+        
+        # Enhanced recommendation categories
+        if overall_score >= 85:
+            recommendation = "Strong Fit ✅ - Priority interview"
+        elif overall_score >= 70:
+            recommendation = "Good Fit ✅ - Recommend interview"
+        elif overall_score >= 55:
+            recommendation = "Consider 🤔 - Further screening needed"
+        elif overall_score >= 40:
+            recommendation = "Weak Fit ⚠️ - Only interview if candidate pool is limited"
+        else:
+            recommendation = "Reject ❌ - Does not meet minimum criteria"
+            
+        return overall_score, recommendation, scores
+    
+    except Exception as e:
+        st.error(f"Error calculating scores: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+        return 0, "Error in calculation", {}
+
+# Dashboard tab functionality
+def dashboard_tab():
+    # Check if we have results data in session state
+    if 'results_data' not in st.session_state or not st.session_state.results_data:
+        st.info("No candidates have been analyzed yet. Please analyze resumes in the Resume Analysis tab first.")
+        return
+    
+    # Get the data from session state
+    results_data = st.session_state.results_data
+    
+    # Extract phone numbers if not already present
+    for candidate in results_data:
+        if 'Phone Number' not in candidate or not candidate['Phone Number']:
+            # Try to extract from resume text if available
+            if 'resume_text' in candidate:
+                candidate['Phone Number'] = extract_phone_number(candidate['resume_text'])
+            else:
+                candidate['Phone Number'] = "Not Available"
+    
+    # Create DataFrame with the key columns for the dashboard
+    df = pd.DataFrame(results_data)
+    
+    # Select columns for dashboard
+    dashboard_columns = ["Candidate Name", "Phone Number", "Job Applying For", 
+                        "Total Experience (Years)", "Overall Weighted Score", 
+                        "Selection Recommendation"]
+    
+    # Filter to only available columns
+    available_columns = [col for col in dashboard_columns if col in df.columns]
+    
+    if len(available_columns) < 3:  # Not enough data to display
+        st.warning("Insufficient data for dashboard. Please ensure the analysis includes candidate names and scores.")
+        return
+    
+    # Sort by Overall Weighted Score in descending order
+    if "Overall Weighted Score" in df.columns:
+        df["Overall Weighted Score"] = pd.to_numeric(df["Overall Weighted Score"], errors='coerce')
+        df = df.sort_values(by="Overall Weighted Score", ascending=False)
+    
+    # Add styling to the dataframe
+    def highlight_recommendation(val):
+        if isinstance(val, str):
+            if "Strong Fit" in val:
+                return 'background-color: #C6EFCE; color: #006100'
+            elif "Good Fit" in val:
+                return 'background-color: #C6EFCE; color: #006100'
+            elif "Consider" in val:
+                return 'background-color: #FFEB9C; color: #9C5700'
+            elif "Weak Fit" in val:
+                return 'background-color: #FFCC00; color: #9C5700'
+            elif "Reject" in val:
+                return 'background-color: #FFC7CE; color: #9C0006'
+        return ''
+    
+    # Apply the styling
+    styled_df = df[available_columns].style.applymap(
+        highlight_recommendation, 
+        subset=['Selection Recommendation'] if 'Selection Recommendation' in available_columns else []
+    )
+    
+    # Dashboard metrics at the top
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Candidates", len(df))
+    
+    with col2:
+        if "Selection Recommendation" in df.columns:
+            recommended_count = df[df["Selection Recommendation"].str.contains("Strong Fit|Good Fit", na=False)].shape[0]
+            st.metric("Recommended Candidates", recommended_count)
+    
+    with col3:
+        if "Overall Weighted Score" in df.columns:
+            avg_score = df["Overall Weighted Score"].mean()
+            st.metric("Average Score", f"{avg_score:.1f}")
+    
+    with col4:
+        if "Total Experience (Years)" in df.columns:
+            df["Total Experience (Years)"] = pd.to_numeric(df["Total Experience (Years)"], errors='coerce')
+            avg_exp = df["Total Experience (Years)"].mean()
+            st.metric("Average Experience", f"{avg_exp:.1f} years")
+    
+    # Add visualization - Score distribution
+    st.subheader("Score Distribution")
+    
+    if "Overall Weighted Score" in df.columns:
+        # Create score bins
+        score_bins = [0, 40, 55, 70, 85, 100]
+        score_labels = ['Reject', 'Weak Fit', 'Consider', 'Good Fit', 'Strong Fit']
+        
+        df['Score Category'] = pd.cut(df["Overall Weighted Score"], bins=score_bins, labels=score_labels, right=False)
+        
+        # Count candidates in each category
+        category_counts = df['Score Category'].value_counts().reset_index()
+        category_counts.columns = ['Category', 'Count']
+        
+        # Sort by the order in score_labels
+        category_counts['Category'] = pd.Categorical(category_counts['Category'], categories=score_labels, ordered=True)
+        category_counts = category_counts.sort_values('Category')
+        
+        # Create the chart
+        fig = px.bar(category_counts, x='Category', y='Count', 
+                     color='Category',
+                     color_discrete_map={
+                         'Strong Fit': '#4CAF50',
+                         'Good Fit': '#8BC34A',
+                         'Consider': '#FFEB3B',
+                         'Weak Fit': '#FF9800',
+                         'Reject': '#F44336'
+                     },
+                     text='Count')
+        
+        fig.update_layout(height=400, width=700)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Main candidates table
+    st.subheader("Candidates Overview")
+    st.dataframe(styled_df, height=400, use_container_width=True)
+    
+    # Add export functionality
+    if not df.empty:
+        csv = df[available_columns].to_csv(index=False)
+        st.download_button(
+            label="📥 Download Candidates Overview",
+            data=csv,
+            file_name=f"candidates_overview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
+        )
 
 # Original analysis tab functionality
 def main_analysis_tab():
@@ -305,135 +669,27 @@ def main_analysis_tab():
         import traceback
         st.error(traceback.format_exc())
 
-if __name__ == "__main__":
-    main()# Dashboard tab functionality
-def dashboard_tab():
-    # Check if we have results data in session state
-    if 'results_data' not in st.session_state or not st.session_state.results_data:
-        st.info("No candidates have been analyzed yet. Please analyze resumes in the Resume Analysis tab first.")
-        return
+# Main Streamlit App
+def main():
+    st.set_page_config(page_title="Resume Analyzer", layout="wide", initial_sidebar_state="expanded")
     
-    # Get the data from session state
-    results_data = st.session_state.results_data
+    # Create tabs for different views
+    tab1, tab2 = st.tabs(["Resume Analysis", "Candidates Dashboard"])
     
-    # Extract phone numbers if not already present
-    for candidate in results_data:
-        if 'Phone Number' not in candidate or not candidate['Phone Number']:
-            # Try to extract from resume text if available
-            if 'resume_text' in candidate:
-                candidate['Phone Number'] = extract_phone_number(candidate['resume_text'])
-            else:
-                candidate['Phone Number'] = "Not Available"
-    
-    # Create DataFrame with the key columns for the dashboard
-    df = pd.DataFrame(results_data)
-    
-    # Select columns for dashboard
-    dashboard_columns = ["Candidate Name", "Phone Number", "Job Applying For", 
-                        "Total Experience (Years)", "Overall Weighted Score", 
-                        "Selection Recommendation"]
-    
-    # Filter to only available columns
-    available_columns = [col for col in dashboard_columns if col in df.columns]
-    
-    if len(available_columns) < 3:  # Not enough data to display
-        st.warning("Insufficient data for dashboard. Please ensure the analysis includes candidate names and scores.")
-        return
-    
-    # Sort by Overall Weighted Score in descending order
-    if "Overall Weighted Score" in df.columns:
-        df["Overall Weighted Score"] = pd.to_numeric(df["Overall Weighted Score"], errors='coerce')
-        df = df.sort_values(by="Overall Weighted Score", ascending=False)
-    
-    # Add styling to the dataframe
-    def highlight_recommendation(val):
-        if isinstance(val, str):
-            if "Strong Fit" in val:
-                return 'background-color: #C6EFCE; color: #006100'
-            elif "Good Fit" in val:
-                return 'background-color: #C6EFCE; color: #006100'
-            elif "Consider" in val:
-                return 'background-color: #FFEB9C; color: #9C5700'
-            elif "Weak Fit" in val:
-                return 'background-color: #FFCC00; color: #9C5700'
-            elif "Reject" in val:
-                return 'background-color: #FFC7CE; color: #9C0006'
-        return ''
-    
-    # Apply the styling
-    styled_df = df[available_columns].style.applymap(
-        highlight_recommendation, 
-        subset=['Selection Recommendation'] if 'Selection Recommendation' in available_columns else []
-    )
-    
-    # Dashboard metrics at the top
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Candidates", len(df))
-    
-    with col2:
-        if "Selection Recommendation" in df.columns:
-            recommended_count = df[df["Selection Recommendation"].str.contains("Strong Fit|Good Fit", na=False)].shape[0]
-            st.metric("Recommended Candidates", recommended_count)
-    
-    with col3:
-        if "Overall Weighted Score" in df.columns:
-            avg_score = df["Overall Weighted Score"].mean()
-            st.metric("Average Score", f"{avg_score:.1f}")
-    
-    with col4:
-        if "Total Experience (Years)" in df.columns:
-            df["Total Experience (Years)"] = pd.to_numeric(df["Total Experience (Years)"], errors='coerce')
-            avg_exp = df["Total Experience (Years)"].mean()
-            st.metric("Average Experience", f"{avg_exp:.1f} years")
-    
-    # Add visualization - Score distribution
-    st.subheader("Score Distribution")
-    
-    if "Overall Weighted Score" in df.columns:
-        # Create score bins
-        score_bins = [0, 40, 55, 70, 85, 100]
-        score_labels = ['Reject', 'Weak Fit', 'Consider', 'Good Fit', 'Strong Fit']
+    with tab1:
+        st.title("📝 Enhanced Resume Analyzer")
+        st.markdown("Built with AI-powered skill matching and scoring")
         
-        df['Score Category'] = pd.cut(df["Overall Weighted Score"], bins=score_bins, labels=score_labels, right=False)
-        
-        # Count candidates in each category
-        category_counts = df['Score Category'].value_counts().reset_index()
-        category_counts.columns = ['Category', 'Count']
-        
-        # Sort by the order in score_labels
-        category_counts['Category'] = pd.Categorical(category_counts['Category'], categories=score_labels, ordered=True)
-        category_counts = category_counts.sort_values('Category')
-        
-        # Create the chart
-        fig = px.bar(category_counts, x='Category', y='Count', 
-                     color='Category',
-                     color_discrete_map={
-                         'Strong Fit': '#4CAF50',
-                         'Good Fit': '#8BC34A',
-                         'Consider': '#FFEB3B',
-                         'Weak Fit': '#FF9800',
-                         'Reject': '#F44336'
-                     },
-                     text='Count')
-        
-        fig.update_layout(height=400, width=700)
-        st.plotly_chart(fig, use_container_width=True)
+        # Original app functionality
+        main_analysis_tab()
     
-    # Main candidates table
-    st.subheader("Candidates Overview")
-    st.dataframe(styled_df, height=400, use_container_width=True)
-    
-    # Add export functionality
-    if not df.empty:
-        csv = df[available_columns].to_csv(index=False)
-        st.download_button(
-            label="📥 Download Candidates Overview",
-            data=csv,
-            file_name=f"candidates_overview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )# Format Excel with styling and organization
+    with tab2:
+        st.title("📊 Candidates Dashboard")
+        st.markdown("Overview of all analyzed candidates")
+        
+        dashboard_tab()
+
+# Format Excel with styling and organization
 def format_excel_workbook(wb, columns):
     try:
         ws = wb.active
@@ -547,260 +803,7 @@ def format_excel_workbook(wb, columns):
     except Exception as e:
         st.error(f"Error formatting Excel: {str(e)}")
         # Return the unformatted workbook as fallback
-        return wbimport streamlit as st
-from groq import Groq
-import PyPDF2
-import os
-import re
-import pandas as pd
-from dotenv import load_dotenv
-from datetime import datetime
-import tempfile
-import openpyxl
-from io import BytesIO
-import time  # For timing functionality
-import plotly.express as px
-
-# Initialize AI client
-def initialize_groq_client():
-    try:
-        return Groq(api_key=os.environ.get("GROQ_API_KEY"))
-    except Exception as e:
-        st.error(f"Failed to initialize Groq client: {str(e)}")
-        return None
-
-# Extract text from PDF
-def extract_text_from_pdf(pdf_file):
-    try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
-        return text if text else None
-    except Exception as e:
-        st.error(f"Error extracting text from PDF: {str(e)}")
-        return None
-
-# Define Planful competitors
-def get_planful_competitors():
-    return [
-        "Anaplan", "Workday Adaptive Planning", "Oracle EPM", "Oracle Hyperion", 
-        "SAP BPC", "IBM Planning Analytics", "TM1", "Prophix", "Vena Solutions", 
-        "Jedox", "OneStream", "Board", "Centage", "Solver", "Kepion", "Host Analytics",
-        "CCH Tagetik", "Infor CPM", "Syntellis", "Longview"
-    ]
-
-# Extract LinkedIn URL directly from resume text
-def extract_linkedin_url(text):
-    if not text:
-        return ""
-    
-    patterns = [
-        r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
-        r'linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
-        r'www\.linkedin\.com/in/[\w-]+(?:/[\w-]+)*',
-        r'linkedin:\s*https?://(?:www\.)?linkedin\.com/in/[\w-]+',
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        if matches:
-            url = matches[0]
-            if not url.startswith('http'):
-                url = 'https://' + ('' if url.startswith('www.') or url.startswith('linkedin.com') else 'www.') + url
-                if url.startswith('https://linkedin.com'):
-                    url = url.replace('https://linkedin.com', 'https://www.linkedin.com')
-            url = re.sub(r'[.,;:)\s]+$', '', url)
-            return url
-    
-    linkedin_mention = re.search(r'linkedin[\s:]*([^\s]+)', text, re.IGNORECASE)
-    if linkedin_mention:
-        potential_url = linkedin_mention.group(1)
-        if '.' in potential_url and '/' in potential_url:
-            url = re.sub(r'[.,;:)\s]+$', '', potential_url)
-            if not url.startswith('http'):
-                url = 'https://' + ('' if url.startswith('www.') else 'www.') + url
-            return url
-    
-    return ""
-
-# Extract phone number from resume text
-def extract_phone_number(text):
-    if not text:
-        return "Not Available"
-    
-    # Common phone number patterns
-    patterns = [
-        r'\b(?:\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b',  # (123) 456-7890, 123-456-7890
-        r'\b\d{10}\b',  # 1234567890
-        r'\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b',  # 123-456-7890, 123.456.7890
-        r'\b\+\d{1,3}\s?\d{6,14}\b'  # International format: +1 1234567890
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text)
-        if matches:
-            return matches[0]
-    
-    return "Not Available"
-
-# Calculate the individual scores and overall score based on the improved algorithm
-def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
-    try:
-        scores = {}
-        
-        # Strong Matches Score - direct from the AI analysis of exact skill matches
-        strong_matches_val = parsed_data.get("Strong Matches Score", "0")
-        try:
-            scores["strong_matches"] = float(strong_matches_val)
-        except (ValueError, TypeError):
-            scores["strong_matches"] = 0
-            
-        # Partial Matches Score - direct from the AI analysis of related skills
-        partial_matches_val = parsed_data.get("Partial Matches Score", "0")
-        try:
-            scores["partial_matches"] = float(partial_matches_val)
-        except (ValueError, TypeError):
-            scores["partial_matches"] = 0
-            
-        # Calculate relevancy score as a weighted sum of strong and partial matches
-        # Give more weight to strong matches (70%) than partial matches (30%)
-        weighted_strong = scores["strong_matches"] * 0.7
-        weighted_partial = scores["partial_matches"] * 0.3
-        
-        # Final relevancy score is the sum of weighted strong and partial matches
-        scores["relevancy"] = min(weighted_strong + weighted_partial, 100)
-        
-        # Update the parsed data with our calculated relevancy score
-        parsed_data["Relevancy Score (0-100)"] = str(round(scores["relevancy"], 1))
-        
-        # Experience calculation - based on required years
-        experience_val = parsed_data.get("Total Experience (Years)", "0")
-        try:
-            candidate_exp = float(experience_val)
-            # More nuanced experience score:
-            # - Below required: proportional score up to 70%
-            # - At required: 80%
-            # - Above required: bonus points up to 100%
-            if candidate_exp < required_experience:
-                scores["experience"] = min((candidate_exp / required_experience) * 70, 70)
-            elif candidate_exp == required_experience:
-                scores["experience"] = 80
-            else:
-                # Additional experience gives bonus points, with diminishing returns
-                bonus = min(((candidate_exp - required_experience) / 2) * 20, 20)
-                scores["experience"] = 80 + bonus
-        except (ValueError, TypeError):
-            scores["experience"] = 0
-            
-        # Job stability - how long candidates typically stay at jobs
-        stability_val = parsed_data.get("Job Stability", "0")
-        try:
-            job_stability = float(stability_val)
-            if job_stability <= 10:  # If rated on 1-10 scale
-                scores["stability"] = job_stability * 10  # Convert to 100-point scale
-            else:  # If provided as average years
-                # Convert years to score: 
-                # - Less than 1 year: proportional score up to 50
-                # - 1-2 years: 50-85
-                # - 2+ years: 85-100
-                if job_stability < 1:
-                    scores["stability"] = (job_stability * 50)
-                elif job_stability < 2:
-                    scores["stability"] = 50 + ((job_stability - 1) * 35)
-                else:
-                    scores["stability"] = 85 + min(((job_stability - 2) * 7.5), 15)
-        except (ValueError, TypeError):
-            scores["stability"] = 0
-            
-        # College rating score
-        college_rating = parsed_data.get("College Rating", "")
-        if college_rating:
-            if "premium" in college_rating.lower() and "non" not in college_rating.lower():
-                scores["college"] = 100
-            elif "non-premium" in college_rating.lower():
-                scores["college"] = 70
-            else:
-                scores["college"] = 40
-        else:
-            scores["college"] = 20
-            
-        # Leadership score - based on presence of leadership experience
-        leadership_skills = parsed_data.get("Leadership Skills", "")
-        if leadership_skills:
-            leadership_keywords = ["led", "managed", "directed", "leadership", "head", "team lead", 
-                                "supervisor", "manager", "chief", "director", "lead"]
-            
-            if any(word in leadership_skills.lower() for word in leadership_keywords):
-                scores["leadership"] = 100
-            else:
-                # Check for partial leadership indicators
-                partial_leadership = ["coordinated", "facilitated", "organized", "spearheaded", "guided"]
-                if any(word in leadership_skills.lower() for word in partial_leadership):
-                    scores["leadership"] = 50
-                else:
-                    scores["leadership"] = 0
-        else:
-            scores["leadership"] = 0
-            
-        # International experience score
-        international_exp = parsed_data.get("International Team Experience", "")
-        if international_exp:
-            international_keywords = ["yes", "international", "global", "worldwide", "multinational", 
-                                    "cross-border", "overseas", "remote teams", "offshore"]
-            
-            if any(word in international_exp.lower() for word in international_keywords):
-                # Look for deeper international experience
-                deep_int_exp = ["led international", "managed global", "cross-cultural", "multiple countries"]
-                if any(phrase in international_exp.lower() for phrase in deep_int_exp):
-                    scores["international"] = 100
-                else:
-                    scores["international"] = 80
-            else:
-                scores["international"] = 0
-        else:
-            scores["international"] = 0
-            
-        # Competitor experience score - more nuanced based on specific competitors
-        competitor_exp = parsed_data.get("Competitor Experience", "")
-        if competitor_exp and competitor_exp.lower().startswith("yes"):
-            # Premium competitors get higher scores
-            premium_competitors = ["anaplan", "workday", "oracle", "sap", "onestream"]
-            if any(comp in competitor_exp.lower() for comp in premium_competitors):
-                scores["competitor"] = 100
-            else:
-                scores["competitor"] = 70
-        else:
-            scores["competitor"] = 0
-            
-        # Calculate weighted overall score with adjusted weights
-        overall_score = (
-            (0.40 * scores["relevancy"]) +        # Skills relevancy is most important
-            (0.15 * scores["experience"]) +       # Years of experience
-            (0.12 * scores["stability"]) +        # Job stability slightly more important
-            (0.10 * scores["college"]) +          # Education background
-            (0.10 * scores["leadership"]) +       # Leadership abilities
-            (0.08 * scores["international"]) +    # International experience slightly less weight
-            (0.05 * scores["competitor"])         # Competitor experience
-        )
-        
-        # Enhanced recommendation categories
-        if overall_score >= 85:
-            recommendation = "Strong Fit ✅ - Priority interview"
-        elif overall_score >= 70:
-            recommendation = "Good Fit ✅ - Recommend interview"
-        elif overall_score >= 55:
-            recommendation = "Consider 🤔 - Further screening needed"
-        elif overall_score >= 40:
-            recommendation = "Weak Fit ⚠️ - Only interview if candidate pool is limited"
-        else:
-            recommendation = "Reject ❌ - Does not meet minimum criteria"
-            
-        return overall_score, recommendation, scores
-    
-    except Exception as e:
-        st.error(f"Error calculating scores: {str(e)}")
-        import traceback
-        st.error(traceback.format_exc())
-        return 0, "Error in calculation", {}
+        return wb
 
 # Analyze resume with detailed skill matching
 def analyze_resume(client, resume_text, job_description):
@@ -1188,88 +1191,3 @@ def parse_analysis(analysis, resume_text=None, job_description=None):
             result["Partial Matches Score"] = str(partial_score)
             result["Strong Matches Reasoning"] = strong_reasoning
             result["Partial Matches Reasoning"] = partial_reasoning
-        
-        # Normalize College Rating
-        if result["College Rating"] != "Not Available":
-            if "premium" in result["College Rating"].lower():
-                result["College Rating"] = "Premium"
-            elif "non" in result["College Rating"].lower() or "not" in result["College Rating"].lower():
-                result["College Rating"] = "Non-Premium"
-        
-        # Normalize International Team Experience
-        if result["International Team Experience"] != "Not Available":
-            if any(word in result["International Team Experience"].lower() for word in ["yes", "has", "worked", "experience"]):
-                if len(result["International Team Experience"]) < 5:  # Just "Yes" or similar
-                    result["International Team Experience"] = "Yes"
-            elif any(word in result["International Team Experience"].lower() for word in ["no", "not", "none"]):
-                if len(result["International Team Experience"]) < 5:  # Just "No" or similar
-                    result["International Team Experience"] = "No"
-        
-        # Handle LinkedIn URL extraction
-        if resume_text and (result["LinkedIn URL"] == "Not Available" or not result["LinkedIn URL"]):
-            result["LinkedIn URL"] = extract_linkedin_url(resume_text)
-        elif result["LinkedIn URL"] != "Not Available":
-            linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
-            if linkedin_match:
-                result["LinkedIn URL"] = linkedin_match.group(0)
-            else:
-                extracted_url = extract_linkedin_url(result["LinkedIn URL"])
-                if extracted_url:
-                    result["LinkedIn URL"] = extracted_url
-        
-        # Clean up Portfolio URL
-        if result["Portfolio URL"] != "Not Available":
-            portfolio_match = re.search(r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|behance\.net|dribbble\.com|[\w-]+\.(?:com|io|org|net))/\S+', result["Portfolio URL"])
-            if portfolio_match:
-                result["Portfolio URL"] = portfolio_match.group(0)
-            elif "not available" in result["Portfolio URL"].lower() or "not found" in result["Portfolio URL"].lower() or "not mentioned" in result["Portfolio URL"].lower():
-                result["Portfolio URL"] = ""
-        else:
-            result["Portfolio URL"] = ""
-        
-        # Use Latest Company if Work History is not available
-        if result["Work History"] == "Not Available" and "Latest Company" in result and result["Latest Company"] != "Not Available":
-            result["Work History"] = result["Latest Company"]
-
-        # Handle Competitor Experience - should be blank (empty string) when no match found
-        if result["Competitor Experience"] == "Not Available" or not result["Competitor Experience"]:
-            # Check work history for competitor names
-            result["Competitor Experience"] = check_competitor_experience(result["Work History"], get_planful_competitors())
-        elif "no" in result["Competitor Experience"].lower() or "not" in result["Competitor Experience"].lower():
-            # If explicitly states no, then make it empty
-            result["Competitor Experience"] = ""
-        elif not result["Competitor Experience"].lower().startswith("yes"):
-            # If doesn't start with "Yes" but has content, check if it's a competitor name
-            competitor_found = False
-            for competitor in get_planful_competitors():
-                if competitor.lower() in result["Competitor Experience"].lower():
-                    result["Competitor Experience"] = f"Yes - {competitor}"
-                    competitor_found = True
-                    break
-            if not competitor_found:
-                result["Competitor Experience"] = ""
-            
-        # Clean all text fields
-        for field in result:
-            result[field] = clean_text(result[field])
-            
-        # Calculate overall score
-        required_experience = 3
-        stability_threshold = 2
-        
-        overall_score, recommendation, individual_scores = calculate_scores(result, required_experience, stability_threshold)
-        
-        result["Overall Weighted Score"] = str(round(overall_score, 2))
-        result["Selection Recommendation"] = recommendation
-        
-        # Add phone number extraction if resume text is available
-        if resume_text:
-            result["Phone Number"] = extract_phone_number(resume_text)
-        
-        return result
-    
-    except Exception as e:
-        st.error(f"Error parsing AI response: {str(e)}")
-        import traceback
-        st.error(traceback.format_exc())
-        return None
