@@ -1,448 +1,15 @@
-# Main Streamlit App
-def main():
-    st.set_page_config(page_title="Resume Analyzer", layout="wide", initial_sidebar_state="expanded")
-    
-    # Create tabs for different views
-    tab1, tab2 = st.tabs(["Resume Analysis", "Candidates Dashboard"])
-    
-    with tab1:
-        st.title("📝 Enhanced Resume Analyzer")
-        st.markdown("Built with AI-powered skill matching and scoring")
-        
-        # Original app functionality
-        main_analysis_tab()
-    
-    with tab2:
-        st.title("📊 Candidates Dashboard")
-        st.markdown("Overview of all analyzed candidates")
-        
-        dashboard_tab()
-
-# Application Entry Point
-if __name__ == "__main__":
-    main()        # Display results data
-        if st.session_state.results_data:
-            st.subheader("Analysis Results")
-            
-            try:
-                # Time the dataframe and results creation
-                results_start_time = time.time()
-                
-                # Create DataFrame with the extracted data
-                df = pd.DataFrame(st.session_state.results_data)
-                
-                # Define the key columns for display in the UI
-                display_columns = [
-                    "Candidate Name", "Total Experience (Years)", "Strong Matches Score", 
-                    "Partial Matches Score", "Relevancy Score (0-100)", "Overall Weighted Score",
-                    "College Rating", "Job Stability", "Latest Company",
-                    "Leadership Skills", "International Team Experience",
-                    "Competitor Experience", "Selection Recommendation"
-                ]
-                
-                # Show all columns that exist in our dataframe
-                available_columns = [col for col in display_columns if col in df.columns]
-                
-                if available_columns:
-                    st.dataframe(df[available_columns])
-                else:
-                    st.warning("No columns to display. Please check the AI response format.")
-                    st.write("DataFrame columns:", df.columns.tolist())
-                
-                results_time = time.time() - results_start_time
-                
-                # For the Excel export, we want all columns
-                export_columns = [
-                    "Candidate Name", "Total Experience (Years)", 
-                    "Strong Matches Score", "Strong Matches Reasoning", 
-                    "Partial Matches Score", "Partial Matches Reasoning", 
-                    "Relevancy Score (0-100)", "All Tech Skills", "Relevant Tech Skills",
-                    "Degree", "College/University", "Job Applying For", "College Rating", 
-                    "Job Stability", "Latest Company", "Leadership Skills", 
-                    "International Team Experience", "Notice Period", "LinkedIn URL", 
-                    "Portfolio URL", "Work History", "Competitor Experience",
-                    "Overall Weighted Score", "Selection Recommendation"
-                ]
-                
-                # Available export columns
-                available_export_columns = [col for col in export_columns if col in df.columns]
-                
-                with st.spinner("Preparing Excel file..."):
-                    excel_start_time = time.time()
-                    try:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
-                            # Make sure we're saving the dataframe with all available columns
-                            if available_export_columns:
-                                export_df = df[available_export_columns]
-                            else:
-                                export_df = df  # Use all columns if our expected ones aren't found
-                            
-                            export_df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
-                            wb = openpyxl.load_workbook(tmpfile.name)
-                            
-                            if available_export_columns:
-                                wb = format_excel_workbook(wb, available_export_columns)
-                            else:
-                                # If no expected columns, use whatever columns are in the dataframe
-                                wb = format_excel_workbook(wb, df.columns.tolist())
-                            
-                            wb.save(tmpfile.name)
-                            tmpfile_path = tmpfile.name
-                        
-                        excel_time = time.time() - excel_start_time
-                        st.success(f"Excel report ready! (Prepared in {excel_time:.2f} seconds)")
-                        
-                        with open(tmpfile_path, "rb") as file:
-                            file_data = file.read()
-                            st.download_button(
-                                label="📥 Download Complete Resume Analysis Report",
-                                data=file_data,
-                                file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-
-                        os.unlink(tmpfile_path)
-                    except Exception as e:
-                        st.error(f"Error creating Excel file: {str(e)}")
-                        st.info("You can still see the results in the table above.")
-            except Exception as e:
-                st.error(f"Error processing results: {str(e)}")
-                import traceback
-                st.error(traceback.format_exc())
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        import traceback
-        st.error(traceback.format_exc())# Original analysis tab functionality
-def main_analysis_tab():
-    with st.sidebar:
-        st.title("Scoring Algorithm")
-        st.markdown("""
-        ### Overall Score Formula
-        - 40% × Relevancy Score (70% Strong + 30% Partial Matches)
-        - 15% × Experience Score
-        - 12% × Job Stability Score
-        - 10% × College Rating
-        - 10% × Leadership Score
-        - 8% × International Experience
-        - 5% × Competitor Experience
-        
-        ### Score Explanations
-        - **Strong Matches**: Exact matching skills found in both JD and resume
-        - **Partial Matches**: Related but different skills (e.g., PowerBI instead of Tableau)
-        - **Relevancy Score**: Weighted combination of Strong (70%) and Partial (30%) matches
-        - **Overall Weighted Score**: Combines relevancy with other factors using weights above
-        
-        ### Selection Categories
-        - **Strong Fit (85-100) ✅**: Priority interview
-        - **Good Fit (70-84) ✅**: Recommend interview
-        - **Consider (55-69) 🤔**: Further screening needed
-        - **Weak Fit (40-54) ⚠️**: Interview if candidate pool is limited
-        - **Reject (0-39) ❌**: Does not meet minimum criteria
-        """)
-        
-        # Add timer metrics display in sidebar
-        with st.expander("⏱️ Performance Metrics", expanded=True):
-            st.markdown("### Processing Times")
-            st.markdown("Track how long each resume takes to process:")
-            
-            # Create placeholder metrics that will be updated during processing
-            current_timer_container = st.empty()
-            api_call_timer_container = st.empty()
-            parsing_timer_container = st.empty()
-            avg_timer_container = st.empty()
-            total_timer_container = st.empty()
-    
-    try:
-        load_dotenv()
-        
-        api_key = os.environ.get("GROQ_API_KEY")
-        if not api_key:
-            st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
-            st.info("You can get an API key from https://console.groq.com/")
-            return
-            
-        client = initialize_groq_client()
-        if not client:
-            st.error("Failed to initialize Groq client. Please check your API key.")
-            return
-            
-        uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
-        job_description = st.text_area("Paste the job description here", height=200)
-        
-        # Create results_data in session state if it doesn't exist
-        if 'results_data' not in st.session_state:
-            st.session_state.results_data = []
-        
-        # Initialize timer metrics in session state
-        if 'total_processing_time' not in st.session_state:
-            st.session_state.total_processing_time = 0
-        if 'processed_count' not in st.session_state:
-            st.session_state.processed_count = 0
-        if 'total_api_time' not in st.session_state:
-            st.session_state.total_api_time = 0
-        if 'total_parsing_time' not in st.session_state:
-            st.session_state.total_parsing_time = 0
-        if 'total_extraction_time' not in st.session_state:
-            st.session_state.total_extraction_time = 0
-        
-        if uploaded_files and job_description:
-            if st.button("Analyze All Resumes"):
-                progress_bar = st.progress(0)
-                total_files = len(uploaded_files)
-                
-                # Clear previous results when starting a new batch
-                st.session_state.results_data = []
-                
-                # Start batch timing
-                batch_start_time = time.time()
-                
-                for i, uploaded_file in enumerate(uploaded_files):
-                    st.subheader(f"Resume: {uploaded_file.name}")
-                    
-                    # Start timer for individual resume
-                    resume_start_time = time.time()
-                    current_timer_container.metric("⏱️ Current Resume", "Processing...")
-                    
-                    with st.spinner(f"Analyzing {uploaded_file.name}..."):
-                        # Time the PDF extraction
-                        extraction_start = time.time()
-                        resume_text = extract_text_from_pdf(uploaded_file)
-                        extraction_time = time.time() - extraction_start
-                        st.session_state.total_extraction_time += extraction_time
-                        
-                        if resume_text:
-                            # Time the AI analysis (API call)
-                            api_call_start = time.time()
-                            analysis = analyze_resume(client, resume_text, job_description)
-                            api_call_time = time.time() - api_call_start
-                            
-                            # Extract API call time from embedded data in analysis
-                            api_time_match = re.search(r'API call time: (\d+\.\d+)', analysis) if analysis else None
-                            if api_time_match:
-                                api_call_time = float(api_time_match.group(1))
-                            
-                            st.session_state.total_api_time += api_call_time
-                            api_call_timer_container.metric("⏱️ API Call", f"{api_call_time:.2f} seconds")
-                            
-                            if analysis:
-                                # Time the parsing process
-                                parsing_start = time.time()
-                                parsed_data = parse_analysis(analysis, resume_text, job_description)
-                                parsing_time = time.time() - parsing_start
-                                st.session_state.total_parsing_time += parsing_time
-                                parsing_timer_container.metric("⏱️ Parsing", f"{parsing_time:.2f} seconds")
-                                
-                                if parsed_data:
-                                    # Store the resume text for possible phone number extraction
-                                    parsed_data['resume_text'] = resume_text
-                                    
-                                    # Store the analyzed data in session state for dashboard
-                                    st.session_state.results_data.append(parsed_data)
-                                    
-                                    # Calculate and display time metrics for this resume
-                                    resume_time = time.time() - resume_start_time
-                                    st.session_state.total_processing_time += resume_time
-                                    st.session_state.processed_count += 1
-                                    
-                                    # Update timer metrics in sidebar
-                                    current_timer_container.metric("⏱️ Current Resume", f"{resume_time:.2f} seconds")
-                                    
-                                    avg_time = st.session_state.total_processing_time / st.session_state.processed_count
-                                    avg_timer_container.metric("⏱️ Average Time", f"{avg_time:.2f} seconds/resume")
-                                    total_timer_container.metric("⏱️ Total Time", f"{st.session_state.total_processing_time:.2f} seconds")
-                                    
-                                    # Success message with timing information
-                                    st.success(f"Successfully analyzed {uploaded_file.name} in {resume_time:.2f} seconds")
-                                    
-                                    # Add an expander to show the skill match reasoning
-                                    with st.expander("View Skill Matching Details", expanded=False):
-                                        st.markdown("### Strong Matches")
-                                        st.markdown(f"**Score: {parsed_data['Strong Matches Score']}**")
-                                        st.markdown(parsed_data["Strong Matches Reasoning"])
-                                        
-                                        st.markdown("### Partial Matches")
-                                        st.markdown(f"**Score: {parsed_data['Partial Matches Score']}**")
-                                        st.markdown(parsed_data["Partial Matches Reasoning"])
-                                else:
-                                    st.warning(f"Could not extract structured data for {uploaded_file.name}")
-                        else:
-                            st.error(f"Could not extract text from {uploaded_file.name}")
-                            
-                    progress_bar.progress((i + 1) / total_files)
-                
-                # Calculate and show total batch processing time
-                batch_time = time.time() - batch_start_time
-                progress_bar.progress(1.0)
-                
-                # Create detailed timing summary
-                if st.session_state.processed_count > 0:
-                    st.subheader("⏱️ Timing Summary")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Total Batch Time", f"{batch_time:.2f} seconds")
-                    with col2:
-                        avg_time = st.session_state.total_processing_time / st.session_state.processed_count
-                        st.metric("Average Resume Time", f"{avg_time:.2f} seconds")
-                    with col3:
-                        if st.session_state.total_api_time > 0:
-                            api_percentage = (st.session_state.total_api_time / st.session_state.total_processing_time) * 100
-                            st.metric("API Call Percentage", f"{api_percentage:.1f}%")
-                    
-                    st.info(f"✅ Batch processing complete! Total time: {batch_time:.2f} seconds for {len(uploaded_files)} resumes")
-                    
-                    # Add detailed timing breakdown
-                    with st.expander("See detailed timing breakdown", expanded=False):
-                        timing_df = pd.DataFrame({
-                            "Component": ["API Calls", "PDF Extraction", "Parsing", "Other"],
-                            "Total Time (sec)": [
-                                round(st.session_state.total_api_time, 2),
-                                round(st.session_state.total_extraction_time, 2),
-                                round(st.session_state.total_parsing_time, 2),
-                                round(st.session_state.total_processing_time - st.session_state.total_api_time - 
-                                      st.session_state.total_parsing_time - st.session_state.total_extraction_time, 2)
-                            ]
-                        })
-                        timing_df["Percentage"] = (timing_df["Total Time (sec)"] / st.session_state.total_processing_time * 100).round(1).astype(str) + '%'
-                        st.table(timing_df)# Dashboard tab functionality
-def dashboard_tab():
-    # Check if we have results data in session state
-    if 'results_data' not in st.session_state or not st.session_state.results_data:
-        st.info("No candidates have been analyzed yet. Please analyze resumes in the Resume Analysis tab first.")
-        return
-    
-    # Get the data from session state
-    results_data = st.session_state.results_data
-    
-    # Extract phone numbers if not already present
-    for candidate in results_data:
-        if 'Phone Number' not in candidate or not candidate['Phone Number']:
-            # Try to extract from resume text if available
-            if 'resume_text' in candidate:
-                candidate['Phone Number'] = extract_phone_number(candidate['resume_text'])
-            else:
-                candidate['Phone Number'] = "Not Available"
-    
-    # Create DataFrame with the key columns for the dashboard
-    df = pd.DataFrame(results_data)
-    
-    # Select columns for dashboard
-    dashboard_columns = ["Candidate Name", "Phone Number", "Job Applying For", 
-                        "Total Experience (Years)", "Overall Weighted Score", 
-                        "Selection Recommendation"]
-    
-    # Filter to only available columns
-    available_columns = [col for col in dashboard_columns if col in df.columns]
-    
-    if len(available_columns) < 3:  # Not enough data to display
-        st.warning("Insufficient data for dashboard. Please ensure the analysis includes candidate names and scores.")
-        return
-    
-    # Sort by Overall Weighted Score in descending order
-    if "Overall Weighted Score" in df.columns:
-        df["Overall Weighted Score"] = pd.to_numeric(df["Overall Weighted Score"], errors='coerce')
-        df = df.sort_values(by="Overall Weighted Score", ascending=False)
-    
-    # Add styling to the dataframe
-    def highlight_recommendation(val):
-        if isinstance(val, str):
-            if "Strong Fit" in val:
-                return 'background-color: #C6EFCE; color: #006100'
-            elif "Good Fit" in val:
-                return 'background-color: #C6EFCE; color: #006100'
-            elif "Consider" in val:
-                return 'background-color: #FFEB9C; color: #9C5700'
-            elif "Weak Fit" in val:
-                return 'background-color: #FFCC00; color: #9C5700'
-            elif "Reject" in val:
-                return 'background-color: #FFC7CE; color: #9C0006'
-        return ''
-    
-    # Apply the styling
-    styled_df = df[available_columns].style.applymap(
-        highlight_recommendation, 
-        subset=['Selection Recommendation'] if 'Selection Recommendation' in available_columns else []
-    )
-    
-    # Dashboard metrics at the top
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Candidates", len(df))
-    
-    with col2:
-        if "Selection Recommendation" in df.columns:
-            recommended_count = df[df["Selection Recommendation"].str.contains("Strong Fit|Good Fit", na=False)].shape[0]
-            st.metric("Recommended Candidates", recommended_count)
-    
-    with col3:
-        if "Overall Weighted Score" in df.columns:
-            avg_score = df["Overall Weighted Score"].mean()
-            st.metric("Average Score", f"{avg_score:.1f}")
-    
-    with col4:
-        if "Total Experience (Years)" in df.columns:
-            df["Total Experience (Years)"] = pd.to_numeric(df["Total Experience (Years)"], errors='coerce')
-            avg_exp = df["Total Experience (Years)"].mean()
-            st.metric("Average Experience", f"{avg_exp:.1f} years")
-    
-    # Add visualization - Score distribution
-    st.subheader("Score Distribution")
-    
-    if "Overall Weighted Score" in df.columns:
-        # Create score bins
-        score_bins = [0, 40, 55, 70, 85, 100]
-        score_labels = ['Reject', 'Weak Fit', 'Consider', 'Good Fit', 'Strong Fit']
-        
-        df['Score Category'] = pd.cut(df["Overall Weighted Score"], bins=score_bins, labels=score_labels, right=False)
-        
-        # Count candidates in each category
-        category_counts = df['Score Category'].value_counts().reset_index()
-        category_counts.columns = ['Category', 'Count']
-        
-        # Sort by the order in score_labels
-        category_counts['Category'] = pd.Categorical(category_counts['Category'], categories=score_labels, ordered=True)
-        category_counts = category_counts.sort_values('Category')
-        
-        # Create the chart
-        fig = px.bar(category_counts, x='Category', y='Count', 
-                     color='Category',
-                     color_discrete_map={
-                         'Strong Fit': '#4CAF50',
-                         'Good Fit': '#8BC34A',
-                         'Consider': '#FFEB3B',
-                         'Weak Fit': '#FF9800',
-                         'Reject': '#F44336'
-                     },
-                     text='Count')
-        
-        fig.update_layout(height=400, width=700)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    # Main candidates table
-    st.subheader("Candidates Overview")
-    st.dataframe(styled_df, height=400, use_container_width=True)
-    
-    # Add export functionality
-    if not df.empty:
-        csv = df[available_columns].to_csv(index=False)
-        st.download_button(
-            label="📥 Download Candidates Overview",
-            data=csv,
-            file_name=f"candidates_overview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )import streamlit as st
-import pandas as pd
+import streamlit as st
+from groq import Groq
 import PyPDF2
 import os
 import re
+import pandas as pd
+from dotenv import load_dotenv
+from datetime import datetime
 import tempfile
 import openpyxl
-import time
-import plotly.express as px
 from io import BytesIO
-from datetime import datetime
-from dotenv import load_dotenv
-from groq import Groq
+import time  # For timing functionality
 
 # Initialize AI client
 def initialize_groq_client():
@@ -451,122 +18,6 @@ def initialize_groq_client():
     except Exception as e:
         st.error(f"Failed to initialize Groq client: {str(e)}")
         return None
-
-# Format Excel with styling and organization
-def format_excel_workbook(wb, columns):
-    try:
-        ws = wb.active
-        
-        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-        
-        header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
-        header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
-        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        
-        normal_font = Font(name='Calibri', size=11)
-        normal_alignment = Alignment(vertical='center', wrap_text=True)
-        
-        score_alignment = Alignment(horizontal='center', vertical='center')
-        
-        url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
-        
-        competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
-        
-        thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
-        
-        # Apply formatting to headers
-        for col_num, column in enumerate(columns, 1):
-            cell = ws.cell(row=1, column=col_num)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = header_alignment
-            cell.border = thin_border
-        
-        # Apply formatting to data cells
-        max_row = ws.max_row if ws.max_row else 1  # Protect against empty worksheet
-        max_col = ws.max_column if ws.max_column else 1
-        
-        for row in range(2, max_row + 1):
-            for col in range(1, max_col + 1):
-                cell = ws.cell(row=row, column=col)
-                if not cell.value:  # Skip empty cells
-                    continue
-                    
-                cell.font = normal_font
-                cell.alignment = normal_alignment
-                cell.border = thin_border
-                
-                if col <= len(columns):  # Ensure we don't go out of bounds
-                    column_name = columns[col-1]
-                    
-                    if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
-                        cell.alignment = score_alignment
-                        
-                        if cell.value not in ["Not Available", None, ""]:
-                            try:
-                                if any(term in column_name for term in ["Score", "Job Stability"]):
-                                    score_value = float(cell.value)
-                                    if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
-                                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                                    elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
-                                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                                    else:
-                                        cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
-                            except (ValueError, TypeError):
-                                pass
-                    
-                    if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
-                        if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
-                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                        elif "non-premium" in str(cell.value).lower():
-                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                    
-                    if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
-                        if "Strong Fit" in str(cell.value) or "Good Fit" in str(cell.value):
-                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                        elif "Consider" in str(cell.value):
-                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                        elif "Weak Fit" in str(cell.value):
-                            cell.fill = PatternFill(start_color='FFD700', end_color='FFD700', fill_type='solid')  # Orange
-                        elif "Reject" in str(cell.value):
-                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
-                    
-                    if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
-                        cell.font = url_font
-                        try:
-                            cell.hyperlink = cell.value
-                        except Exception:
-                            # Fallback if hyperlink fails
-                            pass
-                    
-                    if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
-                        if str(cell.value).lower().startswith("yes"):
-                            cell.font = competitor_yes_font
-                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
-        
-        # Set column widths
-        for col_num, column in enumerate(columns, 1):
-            column_letter = openpyxl.utils.get_column_letter(col_num)
-            if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
-                ws.column_dimensions[column_letter].width = 40
-            elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
-                ws.column_dimensions[column_letter].width = 30
-            else:
-                ws.column_dimensions[column_letter].width = 18
-        
-        # Freeze the top row
-        ws.freeze_panes = "A2"
-        
-        return wb
-    except Exception as e:
-        st.error(f"Error formatting Excel: {str(e)}")
-        # Return the unformatted workbook as fallback
-        return wb
 
 # Extract text from PDF
 def extract_text_from_pdf(pdf_file):
@@ -620,26 +71,6 @@ def extract_linkedin_url(text):
             return url
     
     return ""
-
-# Extract phone number from resume text
-def extract_phone_number(text):
-    if not text:
-        return "Not Available"
-    
-    # Common phone number patterns
-    patterns = [
-        r'\b(?:\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b',  # (123) 456-7890, 123-456-7890
-        r'\b\d{10}\b',  # 1234567890
-        r'\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b',  # 123-456-7890, 123.456.7890
-        r'\b\+\d{1,3}\s?\d{6,14}\b'  # International format: +1 1234567890
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text)
-        if matches:
-            return matches[0]
-    
-    return "Not Available"
 
 # Calculate the individual scores and overall score based on the improved algorithm
 def calculate_scores(parsed_data, required_experience=3, stability_threshold=2):
@@ -1167,58 +598,505 @@ def parse_analysis(analysis, resume_text=None, job_description=None):
                     result[field] = matches.group(1)
         
         # Special handling for Job Stability
-        if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?, result["Job Stability"]):
+        if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?$', result["Job Stability"]):
             # Try to extract a number from the text
             matches = re.search(r'(\d+(?:\.\d+)?)/10', result["Job Stability"])
             if matches:
-                result["Job Stability"] = matches.group(1)
+                result[field] = matches.group(1)
             else:
                 matches = re.search(r'(\d+(?:\.\d+)?)', result["Job Stability"])
                 if matches:
-                    result["Job Stability"] = matches.group(1)
+                    result[field] = matches.group(1)
         
-        # Extract LinkedIn URL if not found or empty
-        if not result["LinkedIn URL"] or result["LinkedIn URL"] == "Not Available":
-            if resume_text:
-                linkedin_url = extract_linkedin_url(resume_text)
-                if linkedin_url:
-                    result["LinkedIn URL"] = linkedin_url
-        
-        # Clean up formatted text fields
-        text_fields = ["Strong Matches Reasoning", "Partial Matches Reasoning", 
-                      "Leadership Skills", "International Team Experience", "Work History"]
-        
-        for field in text_fields:
-            if result[field] != "Not Available":
-                result[field] = clean_text(result[field])
-        
-        # Handle potential competitor experience
-        if result["Competitor Experience"] == "Not Available" and result["Work History"] != "Not Available":
-            competitor_exp = check_competitor_experience(result["Work History"], get_planful_competitors())
-            if competitor_exp:
-                result["Competitor Experience"] = competitor_exp
-        
-        # Fallback for missing scores - calculate manually if both are missing
-        if (result["Strong Matches Score"] == "Not Available" or result["Partial Matches Score"] == "Not Available") and resume_text and job_description:
+        # IMPORTANT FALLBACK: If we still don't have scores, calculate them manually
+        if (result["Strong Matches Score"] == "Not Available" or result["Strong Matches Score"] == "0") and \
+           (result["Partial Matches Score"] == "Not Available" or result["Partial Matches Score"] == "0") and \
+           resume_text and job_description:
+            # Manually calculate scores as fallback with detailed reasoning
             strong_score, partial_score, strong_reasoning, partial_reasoning = calculate_skills_scores(resume_text, job_description)
-            
-            if result["Strong Matches Score"] == "Not Available":
-                result["Strong Matches Score"] = str(strong_score)
-                result["Strong Matches Reasoning"] = strong_reasoning
-                
-            if result["Partial Matches Score"] == "Not Available":
-                result["Partial Matches Score"] = str(partial_score)
-                result["Partial Matches Reasoning"] = partial_reasoning
+            result["Strong Matches Score"] = str(strong_score)
+            result["Partial Matches Score"] = str(partial_score)
+            result["Strong Matches Reasoning"] = strong_reasoning
+            result["Partial Matches Reasoning"] = partial_reasoning
         
+        # Normalize College Rating
+        if result["College Rating"] != "Not Available":
+            if "premium" in result["College Rating"].lower():
+                result["College Rating"] = "Premium"
+            elif "non" in result["College Rating"].lower() or "not" in result["College Rating"].lower():
+                result["College Rating"] = "Non-Premium"
+        
+        # Normalize International Team Experience
+        if result["International Team Experience"] != "Not Available":
+            if any(word in result["International Team Experience"].lower() for word in ["yes", "has", "worked", "experience"]):
+                if len(result["International Team Experience"]) < 5:  # Just "Yes" or similar
+                    result["International Team Experience"] = "Yes"
+            elif any(word in result["International Team Experience"].lower() for word in ["no", "not", "none"]):
+                if len(result["International Team Experience"]) < 5:  # Just "No" or similar
+                    result["International Team Experience"] = "No"
+        
+        # Handle LinkedIn URL extraction
+        if resume_text and (result["LinkedIn URL"] == "Not Available" or not result["LinkedIn URL"]):
+            result["LinkedIn URL"] = extract_linkedin_url(resume_text)
+        elif result["LinkedIn URL"] != "Not Available":
+            linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
+            if linkedin_match:
+                result["LinkedIn URL"] = linkedin_match.group(0)
+            else:
+                extracted_url = extract_linkedin_url(result["LinkedIn URL"])
+                if extracted_url:
+                    result["LinkedIn URL"] = extracted_url
+        
+        # Clean up Portfolio URL
+        if result["Portfolio URL"] != "Not Available":
+            portfolio_match = re.search(r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|behance\.net|dribbble\.com|[\w-]+\.(?:com|io|org|net))/\S+', result["Portfolio URL"])
+            if portfolio_match:
+                result["Portfolio URL"] = portfolio_match.group(0)
+            elif "not available" in result["Portfolio URL"].lower() or "not found" in result["Portfolio URL"].lower() or "not mentioned" in result["Portfolio URL"].lower():
+                result["Portfolio URL"] = ""
+        else:
+            result["Portfolio URL"] = ""
+        
+        # Use Latest Company if Work History is not available
+        if result["Work History"] == "Not Available" and "Latest Company" in result and result["Latest Company"] != "Not Available":
+            result["Work History"] = result["Latest Company"]
+
+        # Handle Competitor Experience - should be blank (empty string) when no match found
+        if result["Competitor Experience"] == "Not Available" or not result["Competitor Experience"]:
+            # Check work history for competitor names
+            result["Competitor Experience"] = check_competitor_experience(result["Work History"], get_planful_competitors())
+        elif "no" in result["Competitor Experience"].lower() or "not" in result["Competitor Experience"].lower():
+            # If explicitly states no, then make it empty
+            result["Competitor Experience"] = ""
+        elif not result["Competitor Experience"].lower().startswith("yes"):
+            # If doesn't start with "Yes" but has content, check if it's a competitor name
+            competitor_found = False
+            for competitor in get_planful_competitors():
+                if competitor.lower() in result["Competitor Experience"].lower():
+                    result["Competitor Experience"] = f"Yes - {competitor}"
+                    competitor_found = True
+                    break
+            if not competitor_found:
+                result["Competitor Experience"] = ""
+            
+        # Clean all text fields
+        for field in result:
+            result[field] = clean_text(result[field])
+            
         # Calculate overall score
-        overall_score, recommendation, detailed_scores = calculate_scores(result)
-        result["Overall Weighted Score"] = str(round(overall_score, 1))
+        required_experience = 3
+        stability_threshold = 2
+        
+        overall_score, recommendation, individual_scores = calculate_scores(result, required_experience, stability_threshold)
+        
+        result["Overall Weighted Score"] = str(round(overall_score, 2))
         result["Selection Recommendation"] = recommendation
         
         return result
-        
+    
     except Exception as e:
-        st.error(f"Error parsing analysis: {str(e)}")
+        st.error(f"Error parsing AI response: {str(e)}")
         import traceback
         st.error(traceback.format_exc())
         return None
+
+# Format Excel with styling and organization
+def format_excel_workbook(wb, columns):
+    try:
+        ws = wb.active
+        
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        
+        header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        
+        normal_font = Font(name='Calibri', size=11)
+        normal_alignment = Alignment(vertical='center', wrap_text=True)
+        
+        score_alignment = Alignment(horizontal='center', vertical='center')
+        
+        url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
+        
+        competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
+        
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Apply formatting to headers
+        for col_num, column in enumerate(columns, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = thin_border
+        
+        # Apply formatting to data cells
+        max_row = ws.max_row if ws.max_row else 1  # Protect against empty worksheet
+        max_col = ws.max_column if ws.max_column else 1
+        
+        for row in range(2, max_row + 1):
+            for col in range(1, max_col + 1):
+                cell = ws.cell(row=row, column=col)
+                if not cell.value:  # Skip empty cells
+                    continue
+                    
+                cell.font = normal_font
+                cell.alignment = normal_alignment
+                cell.border = thin_border
+                
+                if col <= len(columns):  # Ensure we don't go out of bounds
+                    column_name = columns[col-1]
+                    
+                    if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
+                        cell.alignment = score_alignment
+                        
+                        if cell.value not in ["Not Available", None, ""]:
+                            try:
+                                if any(term in column_name for term in ["Score", "Job Stability"]):
+                                    score_value = float(cell.value)
+                                    if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
+                                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                                    elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
+                                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                                    else:
+                                        cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
+                        if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
+                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                        elif "non-premium" in str(cell.value).lower():
+                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                    
+                    if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
+                        if "Strong Fit" in str(cell.value) or "Good Fit" in str(cell.value):
+                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                        elif "Consider" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                        elif "Weak Fit" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFD700', end_color='FFD700', fill_type='solid')  # Orange
+                        elif "Reject" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                    
+                    if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
+                        cell.font = url_font
+                        try:
+                            cell.hyperlink = cell.value
+                        except Exception:
+                            # Fallback if hyperlink fails
+                            pass
+                    
+                    if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
+                        if str(cell.value).lower().startswith("yes"):
+                            cell.font = competitor_yes_font
+                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
+        
+        # Set column widths
+        for col_num, column in enumerate(columns, 1):
+            column_letter = openpyxl.utils.get_column_letter(col_num)
+            if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
+                ws.column_dimensions[column_letter].width = 40
+            elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
+                ws.column_dimensions[column_letter].width = 30
+            else:
+                ws.column_dimensions[column_letter].width = 18
+        
+        # Freeze the top row
+        ws.freeze_panes = "A2"
+        
+        return wb
+    except Exception as e:
+        st.error(f"Error formatting Excel: {str(e)}")
+        # Return the unformatted workbook as fallback
+        return wb
+
+# Main Streamlit App
+def main():
+    st.set_page_config(page_title="Resume Analyzer", layout="wide", initial_sidebar_state="expanded")
+    
+    st.title("📝 Enhanced Resume Analyzer")
+    st.markdown("Built with AI-powered skill matching and scoring")
+    
+    with st.sidebar:
+        st.title("Scoring Algorithm")
+        st.markdown("""
+        ### Overall Score Formula
+        - 40% × Relevancy Score (70% Strong + 30% Partial Matches)
+        - 15% × Experience Score
+        - 12% × Job Stability Score
+        - 10% × College Rating
+        - 10% × Leadership Score
+        - 8% × International Experience
+        - 5% × Competitor Experience
+        
+        ### Score Explanations
+        - **Strong Matches**: Exact matching skills found in both JD and resume
+        - **Partial Matches**: Related but different skills (e.g., PowerBI instead of Tableau)
+        - **Relevancy Score**: Weighted combination of Strong (70%) and Partial (30%) matches
+        - **Overall Weighted Score**: Combines relevancy with other factors using weights above
+        
+        ### Selection Categories
+        - **Strong Fit (85-100) ✅**: Priority interview
+        - **Good Fit (70-84) ✅**: Recommend interview
+        - **Consider (55-69) 🤔**: Further screening needed
+        - **Weak Fit (40-54) ⚠️**: Interview if candidate pool is limited
+        - **Reject (0-39) ❌**: Does not meet minimum criteria
+        """)
+        
+        # Add timer metrics display in sidebar
+        with st.expander("⏱️ Performance Metrics", expanded=True):
+            st.markdown("### Processing Times")
+            st.markdown("Track how long each resume takes to process:")
+            
+            # Create placeholder metrics that will be updated during processing
+            current_timer_container = st.empty()
+            api_call_timer_container = st.empty()
+            parsing_timer_container = st.empty()
+            avg_timer_container = st.empty()
+            total_timer_container = st.empty()
+    
+    try:
+        load_dotenv()
+        
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            st.error("GROQ_API_KEY not found. Please set it in your environment or .env file.")
+            st.info("You can get an API key from https://console.groq.com/")
+            return
+            
+        client = initialize_groq_client()
+        if not client:
+            st.error("Failed to initialize Groq client. Please check your API key.")
+            return
+            
+        uploaded_files = st.file_uploader("Upload resumes (PDF)", type=['pdf'], accept_multiple_files=True)
+        job_description = st.text_area("Paste the job description here", height=200)
+        
+        results_data = []
+        
+        # Initialize timer metrics in session state
+        if 'total_processing_time' not in st.session_state:
+            st.session_state.total_processing_time = 0
+        if 'processed_count' not in st.session_state:
+            st.session_state.processed_count = 0
+        if 'total_api_time' not in st.session_state:
+            st.session_state.total_api_time = 0
+        if 'total_parsing_time' not in st.session_state:
+            st.session_state.total_parsing_time = 0
+        if 'total_extraction_time' not in st.session_state:
+            st.session_state.total_extraction_time = 0
+        
+        if uploaded_files and job_description:
+            if st.button("Analyze All Resumes"):
+                progress_bar = st.progress(0)
+                total_files = len(uploaded_files)
+                
+                # Start batch timing
+                batch_start_time = time.time()
+                
+                for i, uploaded_file in enumerate(uploaded_files):
+                    st.subheader(f"Resume: {uploaded_file.name}")
+                    
+                    # Start timer for individual resume
+                    resume_start_time = time.time()
+                    current_timer_container.metric("⏱️ Current Resume", "Processing...")
+                    
+                    with st.spinner(f"Analyzing {uploaded_file.name}..."):
+                        # Time the PDF extraction
+                        extraction_start = time.time()
+                        resume_text = extract_text_from_pdf(uploaded_file)
+                        extraction_time = time.time() - extraction_start
+                        st.session_state.total_extraction_time += extraction_time
+                        
+                        if resume_text:
+                            # Time the AI analysis (API call)
+                            api_call_start = time.time()
+                            analysis = analyze_resume(client, resume_text, job_description)
+                            api_call_time = time.time() - api_call_start
+                            
+                            # Extract API call time from embedded data in analysis
+                            api_time_match = re.search(r'API call time: (\d+\.\d+)', analysis) if analysis else None
+                            if api_time_match:
+                                api_call_time = float(api_time_match.group(1))
+                            
+                            st.session_state.total_api_time += api_call_time
+                            api_call_timer_container.metric("⏱️ API Call", f"{api_call_time:.2f} seconds")
+                            
+                            if analysis:
+                                # Time the parsing process
+                                parsing_start = time.time()
+                                parsed_data = parse_analysis(analysis, resume_text, job_description)
+                                parsing_time = time.time() - parsing_start
+                                st.session_state.total_parsing_time += parsing_time
+                                parsing_timer_container.metric("⏱️ Parsing", f"{parsing_time:.2f} seconds")
+                                
+                                if parsed_data:
+                                    results_data.append(parsed_data)
+                                    
+                                    # Calculate and display time metrics for this resume
+                                    resume_time = time.time() - resume_start_time
+                                    st.session_state.total_processing_time += resume_time
+                                    st.session_state.processed_count += 1
+                                    
+                                    # Update timer metrics in sidebar
+                                    current_timer_container.metric("⏱️ Current Resume", f"{resume_time:.2f} seconds")
+                                    
+                                    avg_time = st.session_state.total_processing_time / st.session_state.processed_count
+                                    avg_timer_container.metric("⏱️ Average Time", f"{avg_time:.2f} seconds/resume")
+                                    total_timer_container.metric("⏱️ Total Time", f"{st.session_state.total_processing_time:.2f} seconds")
+                                    
+                                    # Success message with timing information
+                                    st.success(f"Successfully analyzed {uploaded_file.name} in {resume_time:.2f} seconds")
+                                    
+                                    # Add an expander to show the skill match reasoning
+                                    with st.expander("View Skill Matching Details", expanded=False):
+                                        st.markdown("### Strong Matches")
+                                        st.markdown(f"**Score: {parsed_data['Strong Matches Score']}**")
+                                        st.markdown(parsed_data["Strong Matches Reasoning"])
+                                        
+                                        st.markdown("### Partial Matches")
+                                        st.markdown(f"**Score: {parsed_data['Partial Matches Score']}**")
+                                        st.markdown(parsed_data["Partial Matches Reasoning"])
+                                else:
+                                    st.warning(f"Could not extract structured data for {uploaded_file.name}")
+                        else:
+                            st.error(f"Could not extract text from {uploaded_file.name}")
+                            
+                    progress_bar.progress((i + 1) / total_files)
+                
+                # Calculate and show total batch processing time
+                batch_time = time.time() - batch_start_time
+                progress_bar.progress(1.0)
+                
+                # Create detailed timing summary
+                if st.session_state.processed_count > 0:
+                    st.subheader("⏱️ Timing Summary")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Total Batch Time", f"{batch_time:.2f} seconds")
+                    with col2:
+                        avg_time = st.session_state.total_processing_time / st.session_state.processed_count
+                        st.metric("Average Resume Time", f"{avg_time:.2f} seconds")
+                    with col3:
+                        if st.session_state.total_api_time > 0:
+                            api_percentage = (st.session_state.total_api_time / st.session_state.total_processing_time) * 100
+                            st.metric("API Call Percentage", f"{api_percentage:.1f}%")
+                    
+                    st.info(f"✅ Batch processing complete! Total time: {batch_time:.2f} seconds for {len(uploaded_files)} resumes")
+                    
+                    # Add detailed timing breakdown
+                    with st.expander("See detailed timing breakdown", expanded=False):
+                        timing_df = pd.DataFrame({
+                            "Component": ["API Calls", "PDF Extraction", "Parsing", "Other"],
+                            "Total Time (sec)": [
+                                round(st.session_state.total_api_time, 2),
+                                round(st.session_state.total_extraction_time, 2),
+                                round(st.session_state.total_parsing_time, 2),
+                                round(st.session_state.total_processing_time - st.session_state.total_api_time - 
+                                      st.session_state.total_parsing_time - st.session_state.total_extraction_time, 2)
+                            ]
+                        })
+                        timing_df["Percentage"] = (timing_df["Total Time (sec)"] / st.session_state.total_processing_time * 100).round(1).astype(str) + '%'
+                        st.table(timing_df)
+        
+        if results_data:
+            st.subheader("Analysis Results")
+            
+            try:
+                # Time the dataframe and results creation
+                results_start_time = time.time()
+                
+                # Create DataFrame with the extracted data
+                df = pd.DataFrame(results_data)
+                
+                # Define the key columns for display in the UI
+                display_columns = [
+                    "Candidate Name", "Total Experience (Years)", "Strong Matches Score", 
+                    "Partial Matches Score", "Relevancy Score (0-100)", "Overall Weighted Score",
+                    "College Rating", "Job Stability", "Latest Company",
+                    "Leadership Skills", "International Team Experience",
+                    "Competitor Experience", "Selection Recommendation"
+                ]
+                
+                # Show all columns that exist in our dataframe
+                available_columns = [col for col in display_columns if col in df.columns]
+                
+                if available_columns:
+                    st.dataframe(df[available_columns])
+                else:
+                    st.warning("No columns to display. Please check the AI response format.")
+                    st.write("DataFrame columns:", df.columns.tolist())
+                
+                results_time = time.time() - results_start_time
+                
+                # For the Excel export, we want all columns
+                export_columns = [
+                    "Candidate Name", "Total Experience (Years)", 
+                    "Strong Matches Score", "Strong Matches Reasoning", 
+                    "Partial Matches Score", "Partial Matches Reasoning", 
+                    "Relevancy Score (0-100)", "All Tech Skills", "Relevant Tech Skills",
+                    "Degree", "College/University", "Job Applying For", "College Rating", 
+                    "Job Stability", "Latest Company", "Leadership Skills", 
+                    "International Team Experience", "Notice Period", "LinkedIn URL", 
+                    "Portfolio URL", "Work History", "Competitor Experience",
+                    "Overall Weighted Score", "Selection Recommendation"
+                ]
+                
+                # Available export columns
+                available_export_columns = [col for col in export_columns if col in df.columns]
+                
+                with st.spinner("Preparing Excel file..."):
+                    excel_start_time = time.time()
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmpfile:
+                            # Make sure we're saving the dataframe with all available columns
+                            if available_export_columns:
+                                export_df = df[available_export_columns]
+                            else:
+                                export_df = df  # Use all columns if our expected ones aren't found
+                            
+                            export_df.to_excel(tmpfile.name, index=False, sheet_name='Resume Analysis', engine='openpyxl')
+                            wb = openpyxl.load_workbook(tmpfile.name)
+                            
+                            if available_export_columns:
+                                wb = format_excel_workbook(wb, available_export_columns)
+                            else:
+                                # If no expected columns, use whatever columns are in the dataframe
+                                wb = format_excel_workbook(wb, df.columns.tolist())
+                            
+                            wb.save(tmpfile.name)
+                            tmpfile_path = tmpfile.name
+                        
+                        excel_time = time.time() - excel_start_time
+                        st.success(f"Excel report ready! (Prepared in {excel_time:.2f} seconds)")
+                        
+                        with open(tmpfile_path, "rb") as file:
+                            file_data = file.read()
+                            st.download_button(
+                                label="📥 Download Complete Resume Analysis Report",
+                                data=file_data,
+                                file_name=f"resume_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+
+                        os.unlink(tmpfile_path)
+                    except Exception as e:
+                        st.error(f"Error creating Excel file: {str(e)}")
+                        st.info("You can still see the results in the table above.")
+            except Exception as e:
+                st.error(f"Error processing results: {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+
+if __name__ == "__main__":
+    main()
