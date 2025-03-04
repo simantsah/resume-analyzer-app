@@ -1,51 +1,22 @@
-import streamlit as st
-import pandas as pd
-import PyPDF2
-import os
-import re
-import tempfile
-import openpyxl
-import time
-import plotly.express as px
-from io import BytesIO
-from datetime import datetime
-from dotenv import load_dotenv
-from groq import Groq
-
-# Initialize AI client
-def initialize_groq_client():
-    try:
-        return Groq(api_key=os.environ.get("GROQ_API_KEY"))
-    except Exception as e:
-        st.error(f"Failed to initialize Groq client: {str(e)}")
-        return None
-
-# Format Excel with styling and organization
-def format_excel_workbook(wb, columns):
-    try:
-        ws = wb.active
+# Main Streamlit App
+def main():
+    st.set_page_config(page_title="Resume Analyzer", layout="wide", initial_sidebar_state="expanded")
+    
+    # Create tabs for different views
+    tab1, tab2 = st.tabs(["Resume Analysis", "Candidates Dashboard"])
+    
+    with tab1:
+        st.title("📝 Enhanced Resume Analyzer")
+        st.markdown("Built with AI-powered skill matching and scoring")
         
-        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        # Original app functionality
+        main_analysis_tab()
+    
+    with tab2:
+        st.title("📊 Candidates Dashboard")
+        st.markdown("Overview of all analyzed candidates")
         
-        header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
-        header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
-        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        
-        normal_font = Font(name='Calibri', size=11)
-        normal_alignment = Alignment(vertical='center', wrap_text=True)
-        
-        score_alignment = Alignment(horizontal='center', vertical='center')
-        
-        url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
-        
-        competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
-        
-        thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
+        dashboard_tab()
 
 # Original analysis tab functionality
 def main_analysis_tab():
@@ -329,121 +300,13 @@ def main_analysis_tab():
                 st.error(f"Error processing results: {str(e)}")
                 import traceback
                 st.error(traceback.format_exc())
-
-# Main Streamlit App
-def main():
-    st.set_page_config(page_title="Resume Analyzer", layout="wide", initial_sidebar_state="expanded")
-    
-    # Create tabs for different views
-    tab1, tab2 = st.tabs(["Resume Analysis", "Candidates Dashboard"])
-    
-    with tab1:
-        st.title("📝 Enhanced Resume Analyzer")
-        st.markdown("Built with AI-powered skill matching and scoring")
-        
-        # Original app functionality
-        main_analysis_tab()
-    
-    with tab2:
-        st.title("📊 Candidates Dashboard")
-        st.markdown("Overview of all analyzed candidates")
-        
-        dashboard_tab()
-
-# Application Entry Point
-if __name__ == "__main__":
-    main()
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
         import traceback
         st.error(traceback.format_exc())
-        
-        # Apply formatting to headers
-        for col_num, column in enumerate(columns, 1):
-            cell = ws.cell(row=1, column=col_num)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = header_alignment
-            cell.border = thin_border
-        
-        # Apply formatting to data cells
-        max_row = ws.max_row if ws.max_row else 1  # Protect against empty worksheet
-        max_col = ws.max_column if ws.max_column else 1
-        
-        for row in range(2, max_row + 1):
-            for col in range(1, max_col + 1):
-                cell = ws.cell(row=row, column=col)
-                if not cell.value:  # Skip empty cells
-                    continue
-                    
-                cell.font = normal_font
-                cell.alignment = normal_alignment
-                cell.border = thin_border
-                
-                if col <= len(columns):  # Ensure we don't go out of bounds
-                    column_name = columns[col-1]
-                    
-                    if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
-                        cell.alignment = score_alignment
-                        
-                        if cell.value not in ["Not Available", None, ""]:
-                            try:
-                                if any(term in column_name for term in ["Score", "Job Stability"]):
-                                    score_value = float(cell.value)
-                                    if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
-                                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                                    elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
-                                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                                    else:
-                                        cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
-                            except (ValueError, TypeError):
-                                pass
-                    
-                    if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
-                        if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
-                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                        elif "non-premium" in str(cell.value).lower():
-                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                    
-                    if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
-                        if "Strong Fit" in str(cell.value) or "Good Fit" in str(cell.value):
-                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
-                        elif "Consider" in str(cell.value):
-                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
-                        elif "Weak Fit" in str(cell.value):
-                            cell.fill = PatternFill(start_color='FFD700', end_color='FFD700', fill_type='solid')  # Orange
-                        elif "Reject" in str(cell.value):
-                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
-                    
-                    if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
-                        cell.font = url_font
-                        try:
-                            cell.hyperlink = cell.value
-                        except Exception:
-                            # Fallback if hyperlink fails
-                            pass
-                    
-                    if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
-                        if str(cell.value).lower().startswith("yes"):
-                            cell.font = competitor_yes_font
-                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
-        
-        # Set column widths
-        for col_num, column in enumerate(columns, 1):
-            column_letter = openpyxl.utils.get_column_letter(col_num)
-            if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
-                ws.column_dimensions[column_letter].width = 40
-            elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
-                ws.column_dimensions[column_letter].width = 30
-            else:
-                ws.column_dimensions[column_letter].width = 18
-        
-        # Freeze the top row
-        ws.freeze_panes = "A2"
-        
-        return wb
 
-# Dashboard tab functionality
+if __name__ == "__main__":
+    main()# Dashboard tab functionality
 def dashboard_tab():
     # Check if we have results data in session state
     if 'results_data' not in st.session_state or not st.session_state.results_data:
@@ -570,11 +433,141 @@ def dashboard_tab():
             data=csv,
             file_name=f"candidates_overview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
+        )# Format Excel with styling and organization
+def format_excel_workbook(wb, columns):
+    try:
+        ws = wb.active
+        
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        
+        header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        
+        normal_font = Font(name='Calibri', size=11)
+        normal_alignment = Alignment(vertical='center', wrap_text=True)
+        
+        score_alignment = Alignment(horizontal='center', vertical='center')
+        
+        url_font = Font(name='Calibri', size=11, color='0000FF', underline='single')
+        
+        competitor_yes_font = Font(name='Calibri', size=11, bold=True, color='FF0000')
+        
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
         )
+        
+        # Apply formatting to headers
+        for col_num, column in enumerate(columns, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = thin_border
+        
+        # Apply formatting to data cells
+        max_row = ws.max_row if ws.max_row else 1  # Protect against empty worksheet
+        max_col = ws.max_column if ws.max_column else 1
+        
+        for row in range(2, max_row + 1):
+            for col in range(1, max_col + 1):
+                cell = ws.cell(row=row, column=col)
+                if not cell.value:  # Skip empty cells
+                    continue
+                    
+                cell.font = normal_font
+                cell.alignment = normal_alignment
+                cell.border = thin_border
+                
+                if col <= len(columns):  # Ensure we don't go out of bounds
+                    column_name = columns[col-1]
+                    
+                    if any(term in column_name for term in ["Score", "Recommendation", "Job Stability"]):
+                        cell.alignment = score_alignment
+                        
+                        if cell.value not in ["Not Available", None, ""]:
+                            try:
+                                if any(term in column_name for term in ["Score", "Job Stability"]):
+                                    score_value = float(cell.value)
+                                    if score_value >= 75 or (column_name == "Job Stability" and score_value >= 8):
+                                        cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                                    elif score_value >= 50 or (column_name == "Job Stability" and score_value >= 6):
+                                        cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                                    else:
+                                        cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    if column_name == "College Rating" and cell.value not in ["Not Available", None, ""]:
+                        if "premium" in str(cell.value).lower() and "non" not in str(cell.value).lower():
+                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                        elif "non-premium" in str(cell.value).lower():
+                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                    
+                    if column_name == "Selection Recommendation" and cell.value not in ["Not Available", None, ""]:
+                        if "Strong Fit" in str(cell.value) or "Good Fit" in str(cell.value):
+                            cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+                        elif "Consider" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFEB9C', end_color='FFEB9C', fill_type='solid')  # Yellow
+                        elif "Weak Fit" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFD700', end_color='FFD700', fill_type='solid')  # Orange
+                        elif "Reject" in str(cell.value):
+                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+                    
+                    if column_name in ["LinkedIn URL", "Portfolio URL"] and cell.value not in ["Not Available", None, ""]:
+                        cell.font = url_font
+                        try:
+                            cell.hyperlink = cell.value
+                        except Exception:
+                            # Fallback if hyperlink fails
+                            pass
+                    
+                    if column_name == "Competitor Experience" and cell.value not in ["Not Available", None, ""]:
+                        if str(cell.value).lower().startswith("yes"):
+                            cell.font = competitor_yes_font
+                            cell.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red background
+        
+        # Set column widths
+        for col_num, column in enumerate(columns, 1):
+            column_letter = openpyxl.utils.get_column_letter(col_num)
+            if any(term in column for term in ["Skills", "Reasoning", "Leadership", "International", "Experience", "Work History"]):
+                ws.column_dimensions[column_letter].width = 40
+            elif any(term in column for term in ["Recommendation", "Notice", "Company", "College", "URL"]):
+                ws.column_dimensions[column_letter].width = 30
+            else:
+                ws.column_dimensions[column_letter].width = 18
+        
+        # Freeze the top row
+        ws.freeze_panes = "A2"
+        
+        return wb
     except Exception as e:
         st.error(f"Error formatting Excel: {str(e)}")
         # Return the unformatted workbook as fallback
-        return wb
+        return wbimport streamlit as st
+from groq import Groq
+import PyPDF2
+import os
+import re
+import pandas as pd
+from dotenv import load_dotenv
+from datetime import datetime
+import tempfile
+import openpyxl
+from io import BytesIO
+import time  # For timing functionality
+import plotly.express as px
+
+# Initialize AI client
+def initialize_groq_client():
+    try:
+        return Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    except Exception as e:
+        st.error(f"Failed to initialize Groq client: {str(e)}")
+        return None
 
 # Extract text from PDF
 def extract_text_from_pdf(pdf_file):
@@ -1175,12 +1168,108 @@ def parse_analysis(analysis, resume_text=None, job_description=None):
                     result[field] = matches.group(1)
         
         # Special handling for Job Stability
-        if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?, result["Job Stability"]):
+        if result["Job Stability"] != "Not Available" and not re.match(r'^\d+(?:\.\d+)?$', result["Job Stability"]):
             # Try to extract a number from the text
             matches = re.search(r'(\d+(?:\.\d+)?)/10', result["Job Stability"])
             if matches:
-                result["Job Stability"] = matches.group(1)
+                result[field] = matches.group(1)
             else:
                 matches = re.search(r'(\d+(?:\.\d+)?)', result["Job Stability"])
                 if matches:
-                    result["Job Stability"] = matches.group(1)
+                    result[field] = matches.group(1)
+        
+        # IMPORTANT FALLBACK: If we still don't have scores, calculate them manually
+        if (result["Strong Matches Score"] == "Not Available" or result["Strong Matches Score"] == "0") and \
+           (result["Partial Matches Score"] == "Not Available" or result["Partial Matches Score"] == "0") and \
+           resume_text and job_description:
+            # Manually calculate scores as fallback with detailed reasoning
+            strong_score, partial_score, strong_reasoning, partial_reasoning = calculate_skills_scores(resume_text, job_description)
+            result["Strong Matches Score"] = str(strong_score)
+            result["Partial Matches Score"] = str(partial_score)
+            result["Strong Matches Reasoning"] = strong_reasoning
+            result["Partial Matches Reasoning"] = partial_reasoning
+        
+        # Normalize College Rating
+        if result["College Rating"] != "Not Available":
+            if "premium" in result["College Rating"].lower():
+                result["College Rating"] = "Premium"
+            elif "non" in result["College Rating"].lower() or "not" in result["College Rating"].lower():
+                result["College Rating"] = "Non-Premium"
+        
+        # Normalize International Team Experience
+        if result["International Team Experience"] != "Not Available":
+            if any(word in result["International Team Experience"].lower() for word in ["yes", "has", "worked", "experience"]):
+                if len(result["International Team Experience"]) < 5:  # Just "Yes" or similar
+                    result["International Team Experience"] = "Yes"
+            elif any(word in result["International Team Experience"].lower() for word in ["no", "not", "none"]):
+                if len(result["International Team Experience"]) < 5:  # Just "No" or similar
+                    result["International Team Experience"] = "No"
+        
+        # Handle LinkedIn URL extraction
+        if resume_text and (result["LinkedIn URL"] == "Not Available" or not result["LinkedIn URL"]):
+            result["LinkedIn URL"] = extract_linkedin_url(resume_text)
+        elif result["LinkedIn URL"] != "Not Available":
+            linkedin_match = re.search(r'https?://(?:www\.)?linkedin\.com/in/[\w-]+(?:/[\w-]+)*', result["LinkedIn URL"])
+            if linkedin_match:
+                result["LinkedIn URL"] = linkedin_match.group(0)
+            else:
+                extracted_url = extract_linkedin_url(result["LinkedIn URL"])
+                if extracted_url:
+                    result["LinkedIn URL"] = extracted_url
+        
+        # Clean up Portfolio URL
+        if result["Portfolio URL"] != "Not Available":
+            portfolio_match = re.search(r'https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org|behance\.net|dribbble\.com|[\w-]+\.(?:com|io|org|net))/\S+', result["Portfolio URL"])
+            if portfolio_match:
+                result["Portfolio URL"] = portfolio_match.group(0)
+            elif "not available" in result["Portfolio URL"].lower() or "not found" in result["Portfolio URL"].lower() or "not mentioned" in result["Portfolio URL"].lower():
+                result["Portfolio URL"] = ""
+        else:
+            result["Portfolio URL"] = ""
+        
+        # Use Latest Company if Work History is not available
+        if result["Work History"] == "Not Available" and "Latest Company" in result and result["Latest Company"] != "Not Available":
+            result["Work History"] = result["Latest Company"]
+
+        # Handle Competitor Experience - should be blank (empty string) when no match found
+        if result["Competitor Experience"] == "Not Available" or not result["Competitor Experience"]:
+            # Check work history for competitor names
+            result["Competitor Experience"] = check_competitor_experience(result["Work History"], get_planful_competitors())
+        elif "no" in result["Competitor Experience"].lower() or "not" in result["Competitor Experience"].lower():
+            # If explicitly states no, then make it empty
+            result["Competitor Experience"] = ""
+        elif not result["Competitor Experience"].lower().startswith("yes"):
+            # If doesn't start with "Yes" but has content, check if it's a competitor name
+            competitor_found = False
+            for competitor in get_planful_competitors():
+                if competitor.lower() in result["Competitor Experience"].lower():
+                    result["Competitor Experience"] = f"Yes - {competitor}"
+                    competitor_found = True
+                    break
+            if not competitor_found:
+                result["Competitor Experience"] = ""
+            
+        # Clean all text fields
+        for field in result:
+            result[field] = clean_text(result[field])
+            
+        # Calculate overall score
+        required_experience = 3
+        stability_threshold = 2
+        
+        overall_score, recommendation, individual_scores = calculate_scores(result, required_experience, stability_threshold)
+        
+        result["Overall Weighted Score"] = str(round(overall_score, 2))
+        result["Selection Recommendation"] = recommendation
+        
+        # Add phone number extraction if resume text is available
+        if resume_text:
+            result["Phone Number"] = extract_phone_number(resume_text)
+        
+        return result
+    
+    except Exception as e:
+        st.error(f"Error parsing AI response: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+        return None
